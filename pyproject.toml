@@ -10,6 +10,14 @@ python = "^3.10"
 pandas = "^2.2.3"
 pdf2image = "^1.17.0"
 datasets = "^3.5.0"
+evaluate = "^0.4.3"
+torch = "^2.6.0"
+torchvision = "^0.21.0"
+numpy = "^2.2.4"
+pillow = "^11.1.0"
+accelerate = "^1.6.0"
+pkginfo = "^1.12.1.2"
+scikit-learn = "^1.6.1"
 
 
 [build-system]
