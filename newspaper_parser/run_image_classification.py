@@ -28,8 +28,6 @@ from torchvision.transforms import (
     Compose,
     Lambda,
     Normalize,
-    RandomHorizontalFlip,
-    RandomResizedCrop,
     Resize,
     ToTensor,
 )
@@ -345,8 +343,7 @@ def main():
             normalize = Lambda(lambda x: x)
         _train_transforms = Compose(
             [
-                RandomResizedCrop(size),
-                RandomHorizontalFlip(),
+                Resize(size),
                 ToTensor(),
                 normalize,
             ]
