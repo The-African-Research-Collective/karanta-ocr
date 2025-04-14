@@ -1,6 +1,7 @@
 import os
 import tempfile
 import random
+from pathlib import Path
 import argparse
 
 from newspaper_parser.utils import split_pdf2image_and_add_to_dataframe, check_for_text_in_image, check_if_image_requires_segmentation

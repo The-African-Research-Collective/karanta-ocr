@@ -1,7 +1,4 @@
-import os
 from pathlib import Path
-import tempfile
-import random
 
 from PIL import Image
 
