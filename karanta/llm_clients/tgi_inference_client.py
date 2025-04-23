@@ -12,13 +12,13 @@ from tenacity import (
     wait_fixed,
 )
 
-from post_training.llms.base import (
+from karanta.llm_clients.base import (
     BaseLLM,
     ModelCompletion,
     Generation_Models,
     ModelProvider,
 )
-from post_training.llms.utils import json_parse_model_output
+from karanta.llm_clients.utils import json_parse_model_output
 
 load_dotenv()
 
