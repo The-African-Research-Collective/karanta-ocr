@@ -1,0 +1,39 @@
+# =============================================================================
+# ========================= Model Arguments ===================================
+# =============================================================================
+model_name_or_path: "google/vit-base-patch16-224-in21k"  # Pretrained model name or path
+cache_dir: "./cache"  # Directory to store cached models
+token: null  # Optional token for private models
+ignore_mismatched_sizes: false  # Whether to ignore size mismatches when loading the model
+image_processor_name: null  # Optional custom image processor name
+# =============================================================================
+# ========================= Data Arguments ===================================
+# =============================================================================
+dataset_name: "taresco/newspaper_ocr"  # Dataset name or list of datasets
+train_dir: null  # Directory for training data
+validation_dir: null  # Directory for validation data
+image_column_name: "image"  # Column name for images in the dataset
+label_column_name: "label"  # Column name for labels in the dataset
+max_train_samples: null  # Maximum number of training samples
+max_eval_samples: null  # Maximum number of evaluation samples
+train_val_split: 0.15  # Fraction of training data to use for validation
+dataset_mixer:  null # Dictionary of datasets to mix
+dataset_mixer_list: null  # Alternative: List of datasets to mix
+# =============================================================================
+# ========================= Experiments Arguments =============================
+# =============================================================================  
+output_dir: "./output"  # Directory to save model checkpoints and outputs
+overwrite_output_dir: false  # Whether to overwrite the output directory
+do_train: true  # Whether to perform training
+do_eval: true  # Whether to perform evaluation
+per_device_train_batch_size: 16  # Batch size for training
+per_device_eval_batch_size: 16  # Batch size for evaluation
+num_train_epochs: 3  # Number of training epochs
+learning_rate: 5e-5  # Learning rate
+seed: 42  # Random seed for reproducibility
+logging_dir: "./logs"  # Directory for logging
+logging_steps: 500  # Log every X steps
+save_steps: 1000  # Save checkpoint every X steps
+evaluation_strategy: "steps"  # Evaluation strategy ("steps" or "epoch")
+push_to_hub: True  # Whether to push the model to the Hugging Face Hub
+hub_model_id: "taresco/newspaper_segmentation_model"
