@@ -15,7 +15,7 @@ def get_response_format_for_model(response_structure: str) -> type[BaseModel]:
     response_class = getattr(module, class_name)
 
     assert issubclass(response_class, BaseModel), (
-        f"{response_structure} if not a subclass of Pydantic BaseModel"
+        f"The response structure '{response_structure}' is not a subclass of Pydantic BaseModel."
     )
 
     return response_class
