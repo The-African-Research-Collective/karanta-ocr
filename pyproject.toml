@@ -1,8 +1,8 @@
 [tool.poetry]
-name = "newspaper_parser"
+name = "karanta"
 version = "0.1.0"
 description = ""
-authors = ["James <dugeri.james@gmail.com>"]
+authors = ["TARESCO"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
