@@ -148,7 +148,7 @@ class AzureOldDeployments(AzureOPENAILLM):
             for future in futures:
                 response = future.result()
                 completions.append(
-                    ModelCompletion(generation=response, model=self.model_name)
+                    ModelCompletion(generation=response, model=self.model_name.value)
                 )
 
         return completions
