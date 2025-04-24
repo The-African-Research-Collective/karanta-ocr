@@ -79,10 +79,10 @@ class DataTrainingArguments:
                     or self.dataset_mixer_list is not None
                 )
             )
-            or (self.dataset_name is not None and self.train_file is not None)
+            or (self.dataset_name is not None and self.train_dir is not None)
             or (
                 (self.dataset_mixer is not None or self.dataset_mixer_list is not None)
-                and self.train_file is not None
+                and self.train_dir is not None
             )
             or (self.dataset_mixer is not None and self.dataset_mixer_list is not None)
         ):
