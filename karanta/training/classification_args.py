@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional
 
 from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING, TrainingArguments
 
@@ -15,7 +15,7 @@ class DataTrainingArguments:
     them on the command line.
     """
 
-    dataset_name: Optional[List[str]] = field(
+    dataset_name: Optional[str] = field(
         default=None,
         metadata={
             "help": "Name of a dataset from the hub (could be your own, possibly private dataset hosted on the hub)."
