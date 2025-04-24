@@ -266,6 +266,9 @@ class ExperimentArguments(TrainingArguments):
         metadata={"help": "Whether to use 16-bit (mixed) precision training."},
     )
 
+    def __post_init__(self):
+        self.learning_rate = float(self.learning_rate)
+
     def get_process_log_level(self) -> int:
         """
         Get the logging level for the process.
