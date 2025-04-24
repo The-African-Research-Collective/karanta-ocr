@@ -29,7 +29,7 @@ from transformers import (
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
-from transformers.utils import check_min_version, send_example_telemetry
+from transformers.utils import send_example_telemetry
 from transformers.utils.versions import require_version
 
 from karanta.training.classification_args import (
@@ -37,14 +37,12 @@ from karanta.training.classification_args import (
     ModelArguments,
     ExperimentArguments,
 )
-from karanta.data.utils import ExtendedArgumentParser, prepare_mixed_datasets
+from karanta.data.utils import prepare_mixed_datasets
+from karanta.training.utils import ExtendedArgumentParser
 
 """ Fine-tuning a 🤗 Transformers model to identify suitable images-text-ocr images that require segmentations"""
 
 logger = logging.getLogger(__name__)
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-check_min_version("4.52.0.dev0")
 
 require_version(
     "datasets>=2.14.0",
@@ -204,7 +202,7 @@ def main(args: ExtendedArgumentParser):
         id2label=id2label,
         finetuning_task="image-classification",
         cache_dir=model_args.cache_dir,
-        revision="main",
+        revision=model_args.model_revision,
         token=model_args.token,
     )
     model = AutoModelForImageClassification.from_pretrained(
@@ -212,14 +210,14 @@ def main(args: ExtendedArgumentParser):
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
-        revision="main",
+        revision=model_args.model_revision,
         token=model_args.token,
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
     image_processor = AutoImageProcessor.from_pretrained(
         model_args.image_processor_name or model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
-        revision="main",
+        revision=model_args.model_revision,
         token=model_args.token,
     )
 
@@ -289,12 +287,6 @@ def main(args: ExtendedArgumentParser):
     if training_args.do_eval:
         if "validation" not in dataset:
             raise ValueError("--do_eval requires a validation dataset")
-        if data_args.max_eval_samples is not None:
-            dataset["validation"] = (
-                dataset["validation"]
-                .shuffle(seed=training_args.seed)
-                .select(range(data_args.max_eval_samples))
-            )
         # Set the validation transforms
         dataset["validation"].set_transform(val_transforms)
 

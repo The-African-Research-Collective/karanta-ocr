@@ -15,7 +15,6 @@ validation_dir: null  # Directory for validation data
 image_column_name: "image"  # Column name for images in the dataset
 label_column_name: "label"  # Column name for labels in the dataset
 max_train_samples: null  # Maximum number of training samples
-max_eval_samples: null  # Maximum number of evaluation samples
 train_val_split: 0.15  # Fraction of training data to use for validation
 dataset_mixer:  null # Dictionary of datasets to mix
 dataset_mixer_list: null  # Alternative: List of datasets to mix

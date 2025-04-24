@@ -1,26 +1,18 @@
 #!/bin/bash
 
-# Check if the configuration file is provided as an argument
-if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 <config_file>"
+# Check if the required arguments are provided
+if [ "$#" -ne 3 ]; then
+  echo "Usage: $0 <data_path> <output_base_path> <output_format>"
   exit 1
 fi
 
-CONFIG_FILE="$1"
+# Assign command-line arguments to variables
+DATA_PATH="$1"
+OUTPUT_BASE_PATH="$2"
+OUTPUT_FORMAT="$3"
 
-# Check if the configuration file exists
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "Error: Configuration file '$CONFIG_FILE' not found."
-  exit 1
-fi
-
-# Extract values from the YAML file
-DATA_PATH=$(grep '^data_path:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
-OUTPUT_BASE_PATH=$(grep '^output_base_path:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
-OUTPUT_FORMAT=$(grep '^output_format:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
-
-# Run the Python script with the extracted arguments
-python karanta/data/pdf2_image.py \
+# Run the Python script with the provided arguments
+python ./karanta/data/pdf2_image.py \
   --data_path "$DATA_PATH" \
   --output_base_path "$OUTPUT_BASE_PATH" \
-  --output_format "$OUTPUT_FORMAT" 
+  --output_format "$OUTPUT_FORMAT"

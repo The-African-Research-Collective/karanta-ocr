@@ -48,15 +48,6 @@ class DataTrainingArguments:
             )
         },
     )
-    max_eval_samples: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
-                "value if set."
-            )
-        },
-    )
     image_column_name: str = field(
         default="image",
         metadata={
@@ -117,6 +108,12 @@ class ModelArguments:
         metadata={
             "help": "If training from scratch, pass a model type from the list: "
             + ", ".join(MODEL_TYPES)
+        },
+    )
+    model_revision: Optional[str] = field(
+        default="main",
+        metadata={
+            "help": "Revision of the model to use (can be a branch name, tag name or git commit id)."
         },
     )
     image_processor_name: str = field(

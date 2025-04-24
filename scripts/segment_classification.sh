@@ -24,4 +24,4 @@ accelerate launch \
     --mixed_precision $TRAINING_PRECISION \
     --num_machines 1 \
     --num_processes $NUM_GPUS \
-    karanta/training/run_image_classification.py $CONFIG
+    ./karanta/training/run_image_classification.py $CONFIG

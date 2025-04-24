@@ -1,10 +1,6 @@
 import os
-import sys
 import json
-import shutil
-import dataclasses
-from dataclasses import dataclass
-from typing import List, Optional, Union, Tuple, Any, NewType
+from typing import List, Optional, Union
 from pathlib import Path
 
 from pdf2image import convert_from_path
@@ -13,64 +9,8 @@ from accelerate.logging import get_logger
 from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 from huggingface_hub import HfApi
 from tenacity import retry, stop_after_attempt, wait_fixed
-from transformers import HfArgumentParser
 
-DataClassType = NewType("DataClassType", Any)
 logger = get_logger(__name__)
-
-
-class ExtendedArgumentParser(HfArgumentParser):
-    def parse_yaml_and_args(
-        self, yaml_file: str, additional_args: Optional[List[str]] = None
-    ) -> List[dataclass]:
-        """
-        Parse a YAML file and override its values with command-line arguments.
-
-        Args:
-            yaml_file (str): Path to the YAML configuration file.
-            additional_args (Optional[List[str]]): Additional command-line arguments.
-
-        Returns:
-            List[dataclass]: Parsed dataclasses with updated values.
-        """
-        yaml_args = self.parse_yaml_file(os.path.abspath(yaml_file))
-        parsed_args = []
-
-        additional_args = {
-            arg.split("=")[0].strip("-"): arg.split("=")[1]
-            for arg in additional_args or []
-        }
-        used_args = {}
-
-        for yaml_data, data_class in zip(yaml_args, self.dataclass_types):
-            keys = {field.name for field in dataclasses.fields(yaml_data) if field.init}
-            inputs = {key: getattr(yaml_data, key) for key in keys}
-            for arg, value in additional_args.items():
-                if arg in keys:
-                    base_type = yaml_data.__dataclass_fields__[arg].type
-                    inputs[arg] = self._cast_type(value, base_type)
-                    if arg in used_args:
-                        raise ValueError(f"Duplicate argument provided: {arg}")
-                    used_args[arg] = value
-            parsed_args.append(data_class(**inputs))
-        return parsed_args
-
-    def parse(self) -> Union[DataClassType, Tuple[DataClassType]]:
-        if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-            return self.parse_yaml_file(os.path.abspath(sys.argv[1]))
-        elif len(sys.argv) > 2 and sys.argv[1].endswith(".yaml"):
-            return self.parse_yaml_and_args(sys.argv[1], sys.argv[2:])
-        return self.parse_args_into_dataclasses()
-
-    @staticmethod
-    def _cast_type(value: str, target_type: Any) -> Any:
-        if target_type in [int, float]:
-            return target_type(value)
-        if target_type == List[str]:
-            return value.split(",")
-        if target_type is bool:
-            return value.lower() in ["true", "1"]
-        return value
 
 
 def prepare_mixed_datasets(
@@ -182,48 +122,6 @@ def prepare_mixed_datasets(
             dataset.save_to_disk(os.path.join(save_dir, f"{split}_mixed"))
 
     return mixed_datasets
-
-
-def get_last_checkpoint(folder: str, incomplete: bool = False) -> Optional[str]:
-    """
-    Retrieve the last checkpoint from a folder.
-
-    Args:
-        folder (str): Path to the folder containing checkpoints.
-        incomplete (bool): Include incomplete checkpoints if True.
-
-    Returns:
-        Optional[str]: Path to the last checkpoint.
-    """
-    checkpoints = [f for f in os.listdir(folder) if f.startswith(("step_", "epoch_"))]
-    if not incomplete:
-        checkpoints = [
-            ckpt
-            for ckpt in checkpoints
-            if os.path.exists(os.path.join(folder, ckpt, "COMPLETED"))
-        ]
-    return (
-        os.path.join(folder, max(checkpoints, key=lambda x: int(x.split("_")[-1])))
-        if checkpoints
-        else None
-    )
-
-
-def clean_old_checkpoints(output_dir: str, keep_last_n: int) -> None:
-    """
-    Remove old checkpoints to save space.
-
-    Args:
-        output_dir (str): Directory containing checkpoints.
-        keep_last_n (int): Number of recent checkpoints to keep.
-    """
-    checkpoints = sorted(
-        [f for f in os.listdir(output_dir) if f.startswith(("step_", "epoch_"))],
-        key=lambda x: int(x.split("_")[-1]),
-    )
-    for checkpoint in checkpoints[:-keep_last_n]:
-        shutil.rmtree(os.path.join(output_dir, checkpoint))
-        logger.info(f"Removed checkpoint: {checkpoint}")
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(10))
