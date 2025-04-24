@@ -47,6 +47,8 @@ class ExtendedArgumentParser(HfArgumentParser):
                         raise ValueError(f"Duplicate argument provided: {arg}")
                     used_args[arg] = value
             parsed_args.append(data_class(**inputs))
+            if len(parsed_args) == 1:
+                parsed_args = parsed_args[0]
         return parsed_args
 
     def parse(self) -> Union[DataClassType, Tuple[DataClassType]]:
