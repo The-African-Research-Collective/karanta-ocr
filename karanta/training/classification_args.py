@@ -110,6 +110,12 @@ class ModelArguments:
             + ", ".join(MODEL_TYPES)
         },
     )
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Where do you want to store the pretrained models downloaded from s3"
+        },
+    )
     model_revision: Optional[str] = field(
         default="main",
         metadata={

@@ -3,6 +3,7 @@
 # =============================================================================
 model_name_or_path: "google/vit-base-patch16-224-in21k"  # Pretrained model name or path
 model_type: null  # Model type (e.g., vit, deit, etc.)
+cache_dir: null  # Directory to cache the model
 model_revision: null  # Model revision (e.g., branch name, tag name, or commit id)
 ignore_mismatched_sizes: false  # Whether to ignore size mismatches when loading the model
 image_processor_name: null  # Optional custom image processor name
