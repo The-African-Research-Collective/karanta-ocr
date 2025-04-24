@@ -1,8 +1,7 @@
-import logging
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING
+from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING, TrainingArguments
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -143,7 +142,7 @@ class ModelArguments:
 
 
 @dataclass
-class ExperimentArguments:
+class ExperimentArguments(TrainingArguments):
     """
     Arguments pertaining to the experiment configuration, replacing TrainingArguments.
     """
@@ -158,40 +157,6 @@ class ExperimentArguments:
         default=False,
         metadata={
             "help": "Whether to overwrite the content of the output directory. Use this to continue training a model."
-        },
-    )
-    should_log: bool = field(
-        default=True,
-        metadata={"help": "Whether to log the training process."},
-    )
-    logging_steps: int = field(
-        default=500,
-        metadata={"help": "Log every X updates steps."},
-    )
-    log_level: str = field(
-        default="info",
-        metadata={
-            "help": "The logging level for the process. Options: 'info', 'debug', 'warning', 'error', 'critical'."
-        },
-    )
-    save_steps: int = field(
-        default=500,
-        metadata={"help": "Save checkpoint every X updates steps."},
-    )
-    save_total_limit: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": "Limit the total amount of checkpoints. Deletes the older checkpoints in the output_dir."
-        },
-    )
-    eval_steps: Optional[int] = field(
-        default=None,
-        metadata={"help": "Run evaluation every X steps."},
-    )
-    load_best_model_at_end: bool = field(
-        default=False,
-        metadata={
-            "help": "Whether to load the best model found at the end of training."
         },
     )
     seed: int = field(
@@ -214,35 +179,9 @@ class ExperimentArguments:
         default=5e-5,
         metadata={"help": "The initial learning rate for AdamW optimizer."},
     )
-    fp16: bool = field(
-        default=False,
-        metadata={"help": "Whether to use 16-bit (mixed) precision training."},
-    )
     push_to_hub: bool = field(
         default=False,
         metadata={"help": "Whether to push the model to the Hugging Face Hub."},
-    )
-    resume_from_checkpoint: Optional[str] = field(
-        default=None,
-        metadata={"help": "If the training should continue from a checkpoint folder."},
-    )
-    dataloader_num_workers: int = field(
-        default=0,
-        metadata={"help": "Number of subprocesses to use for data loading."},
-    )
-    local_rank: int = field(
-        default=-1,
-        metadata={"help": "For distributed training: local_rank."},
-    )
-    disable_tqdm: bool = field(
-        default=False,
-        metadata={"help": "Whether to disable the tqdm progress bar."},
-    )
-    report_to: Optional[str] = field(
-        default="tensorboard",
-        metadata={
-            "help": "The integration to report the results and logs to. Options: 'tensorboard', 'wandb', etc."
-        },
     )
     do_train: bool = field(
         default=False,
@@ -261,26 +200,80 @@ class ExperimentArguments:
     hub_token: str = field(
         default=None, metadata={"help": "The token to use to push to the Model Hub."}
     )
-    device: str = field(
-        default="cpu",
-        metadata={"help": "The device to use for training (e.g., 'cpu', 'cuda')."},
-    )
-    n_gpu: int = field(
-        default=0,
-        metadata={"help": "The number of GPUs available for training."},
-    )
-    parallel_mode: str = field(
-        default="none",
-        metadata={
-            "help": "The parallel mode for distributed training. Options: 'none', 'distributed'."
-        },
-    )
+    # fp16: bool = field(
+    #     default=False,
+    #     metadata={"help": "Whether to use 16-bit (mixed) precision training."},
+    # )
+    # device: str = field(
+    #     default="cpu",
+    #     metadata={"help": "The device to use for training (e.g., 'cpu', 'cuda')."},
+    # )
+    # n_gpu: int = field(
+    #     default=0,
+    #     metadata={"help": "The number of GPUs available for training."},
+    # )
+    # parallel_mode: str = field(
+    #     default="none",
+    #     metadata={
+    #         "help": "The parallel mode for distributed training. Options: 'none', 'distributed'."
+    #     },
+    # )
+    # resume_from_checkpoint: Optional[str] = field(
+    #     default=None,
+    #     metadata={"help": "If the training should continue from a checkpoint folder."},
+    # )
+    # dataloader_num_workers: int = field(
+    #     default=0,
+    #     metadata={"help": "Number of subprocesses to use for data loading."},
+    # )
+    # local_rank: int = field(
+    #     default=-1,
+    #     metadata={"help": "For distributed training: local_rank."},
+    # )
+    # disable_tqdm: bool = field(
+    #     default=False,
+    #     metadata={"help": "Whether to disable the tqdm progress bar."},
+    # )
+    # report_to: Optional[str] = field(
+    #     default="tensorboard",
+    #     metadata={
+    #         "help": "The integration to report the results and logs to. Options: 'tensorboard', 'wandb', etc."
+    #     },
+    # )
+    # should_log: bool = field(
+    #     default=True,
+    #     metadata={"help": "Whether to log the training process."},
+    # )
+    # logging_steps: int = field(
+    #     default=500,
+    #     metadata={"help": "Log every X updates steps."},
+    # )
+    # log_level: str = field(
+    #     default="info",
+    #     metadata={
+    #         "help": "The logging level for the process. Options: 'info', 'debug', 'warning', 'error', 'critical'."
+    #     },
+    # )
+    # save_steps: int = field(
+    #     default=500,
+    #     metadata={"help": "Save checkpoint every X updates steps."},
+    # )
+    # save_total_limit: Optional[int] = field(
+    #     default=None,
+    #     metadata={
+    #         "help": "Limit the total amount of checkpoints. Deletes the older checkpoints in the output_dir."
+    #     },
+    # )
+    # eval_steps: Optional[int] = field(
+    #     default=None,
+    #     metadata={"help": "Run evaluation every X steps."},
+    # )
 
-    def get_process_log_level(self) -> int:
-        """
-        Get the logging level for the process.
+    # def get_process_log_level(self) -> int:
+    #     """
+    #     Get the logging level for the process.
 
-        Returns:
-            int: The logging level (e.g., logging.INFO, logging.DEBUG).
-        """
-        return getattr(logging, self.log_level.upper(), logging.INFO)
+    #     Returns:
+    #         int: The logging level (e.g., logging.INFO, logging.DEBUG).
+    #     """
+    #     return getattr(logging, self.log_level.upper(), logging.INFO)
