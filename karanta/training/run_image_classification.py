@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # modified from https://github.com/huggingface/transformers/tree/main/examples/pytorch/image-classification
-
 import logging
 import os
 import sys
@@ -31,7 +30,6 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import send_example_telemetry
 from transformers.utils.versions import require_version
-
 from karanta.training.classification_args import (
     DataTrainingArguments,
     ModelArguments,

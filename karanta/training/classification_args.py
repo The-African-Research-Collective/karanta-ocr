@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING, TrainingArguments
+from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -143,13 +143,13 @@ class ModelArguments:
 
 
 @dataclass
-class ExperimentArguments(TrainingArguments):
+class ExperimentArguments:
     """
     Arguments pertaining to the experiment configuration, replacing TrainingArguments.
     """
 
     output_dir: str = field(
-        default="output",
+        default="output/",
         metadata={
             "help": "The output directory where the model predictions and checkpoints will be written."
         },
@@ -261,13 +261,20 @@ class ExperimentArguments(TrainingArguments):
     hub_token: str = field(
         default=None, metadata={"help": "The token to use to push to the Model Hub."}
     )
-    fp16: bool = field(
-        default=False,
-        metadata={"help": "Whether to use 16-bit (mixed) precision training."},
+    device: str = field(
+        default="cpu",
+        metadata={"help": "The device to use for training (e.g., 'cpu', 'cuda')."},
     )
-
-    def __post_init__(self):
-        self.learning_rate = float(self.learning_rate)
+    n_gpu: int = field(
+        default=0,
+        metadata={"help": "The number of GPUs available for training."},
+    )
+    parallel_mode: str = field(
+        default="none",
+        metadata={
+            "help": "The parallel mode for distributed training. Options: 'none', 'distributed'."
+        },
+    )
 
     def get_process_log_level(self) -> int:
         """
