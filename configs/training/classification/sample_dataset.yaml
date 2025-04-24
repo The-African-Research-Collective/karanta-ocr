@@ -1,0 +1,6 @@
+dataset_name: "your_dataset_name"
+split: "train"
+columns_to_keep: "column1,column2,column3"
+rename_columns: '{"old_column1": "new_column1", "old_column2": "new_column2"}'  # JSON string for rename_columns
+hub_id: "your_hub_id"
+private: false
