@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING
+from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING, TrainingArguments
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -137,7 +137,7 @@ class ModelArguments:
 
 
 @dataclass
-class ExperimentArguments:
+class ExperimentArguments(TrainingArguments):
     """
     Arguments pertaining to the experiment configuration, replacing TrainingArguments.
     """
