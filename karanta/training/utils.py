@@ -42,6 +42,9 @@ class ExtendedArgumentParser(HfArgumentParser):
             for arg, value in additional_args.items():
                 if arg in keys:
                     base_type = yaml_data.__dataclass_fields__[arg].type
+                    logger.info(
+                        f"Casting argument '{arg}' with value '{value}' to type {base_type}"
+                    )
                     inputs[arg] = self._cast_type(value, base_type)
                     if arg in used_args:
                         raise ValueError(f"Duplicate argument provided: {arg}")
@@ -58,13 +61,18 @@ class ExtendedArgumentParser(HfArgumentParser):
 
     @staticmethod
     def _cast_type(value: str, target_type: Any) -> Any:
-        if target_type in [int, float]:
-            return target_type(value)
-        if target_type == List[str]:
-            return value.split(",")
-        if target_type is bool:
-            return value.lower() in ["true", "1"]
-        return value
+        try:
+            if target_type in [int, float]:
+                return target_type(value)
+            if target_type == List[str]:
+                return value.split(",")
+            if target_type is bool:
+                return value.lower() in ["true", "1"]
+            return value
+        except ValueError as e:
+            raise ValueError(
+                f"Failed to cast value '{value}' to type {target_type}: {e}"
+            )
 
 
 def get_last_checkpoint(folder: str, incomplete: bool = False) -> Optional[str]:
