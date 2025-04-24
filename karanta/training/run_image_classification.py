@@ -336,5 +336,5 @@ if __name__ == "__main__":
     parser = ExtendedArgumentParser(
         (ModelArguments, DataTrainingArguments, ExperimentArguments)
     )
-    args = parser.parse_args_into_dataclasses()
+    args = parser.parse()
     main(args)
