@@ -1,0 +1,3 @@
+data_path: "/path/to/pdf/files"  # Path to the directory containing PDF files
+output_base_path: "/path/to/output/images"  # Path to the directory to save output images
+output_format: "JPEG"  # Image format for output files (e.g., JPEG, PNG, BMP, GIF, TIFF, WEBP)
