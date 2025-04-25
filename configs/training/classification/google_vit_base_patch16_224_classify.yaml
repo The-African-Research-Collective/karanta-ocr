@@ -31,7 +31,6 @@ per_device_eval_batch_size: 16  # Batch size for evaluation
 num_train_epochs: 3  # Number of training epochs
 learning_rate: 5e-5  # Learning rate
 seed: 42  # Random seed for reproducibility
-save_steps: 1000  # Save checkpoint every X steps
 push_to_hub: True  # Whether to push the model to the Hugging Face Hub
 hub_model_id: "taresco/newspaper_segmentation_model"
 hub_token: null  # Optional token for private models

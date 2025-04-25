@@ -202,12 +202,10 @@ class ExperimentArguments:
     )
 
     def post__init__(self):
-        super().__post_init__()
         if self.push_to_hub and self.hub_model_id is None:
             raise ValueError(
                 "If `push_to_hub` is True, you must provide a `hub_model_id`."
             )
-        # write a code that checks for attributes of ExperimentArguments in TrainingArguments and returns training arguments with those non-null values added
 
     # fp16: bool = field(
     #     default=False,

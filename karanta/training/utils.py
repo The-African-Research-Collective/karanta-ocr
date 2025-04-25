@@ -90,15 +90,14 @@ def get_training_arguments(
     Returns:
         TrainingArguments: A new TrainingArguments object with updated values.
     """
-    updated_training_args = training_args.__class__(**vars(training_args))
+    updated_attributes = vars(training_args).copy()
 
     # Iterate over attributes in ExperimentArguments
     for attr, value in vars(experiment_args).items():
-        # Check if the attribute exists in TrainingArguments and is not None
-        if hasattr(updated_training_args, attr) and value is not None:
-            setattr(updated_training_args, attr, value)
+        if attr in updated_attributes and value is not None:
+            updated_attributes[attr] = value
 
-    return updated_training_args
+    return training_args.__class__(**updated_attributes)
 
 
 def get_last_checkpoint(folder: str, incomplete: bool = False) -> Optional[str]:
