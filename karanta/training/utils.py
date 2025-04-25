@@ -62,11 +62,6 @@ class ExtendedArgumentParser(HfArgumentParser):
         else:
             parsed_args = self.parse_args_into_dataclasses()
 
-        # Ensure parsed_args is a tuple
-        if not isinstance(parsed_args, tuple):
-            parsed_args = (parsed_args,)
-
-        # process training_args using get_training_arguments
         if len(parsed_args) == 3:
             model_args, data_args, experiment_args = parsed_args
             training_args = TrainingArguments(output_dir=experiment_args.output_dir)
@@ -102,20 +97,14 @@ def get_training_arguments(
         training_args (TrainingArguments): The TrainingArguments object.
 
     Returns:
-        TrainingArguments: A new TrainingArguments object with updated values.
+        TrainingArguments: The updated TrainingArguments object.
     """
-    valid_keys = set(TrainingArguments.__dataclass_fields__.keys())
-
-    updated_attributes = {
-        key: value for key, value in vars(training_args).items() if key in valid_keys
-    }
-
     # Update attributes with non-null values from ExperimentArguments
     for attr, value in vars(experiment_args).items():
-        if attr in updated_attributes and value is not None:
-            updated_attributes[attr] = value
+        if hasattr(training_args, attr) and value is not None:
+            setattr(training_args, attr, value)
 
-    return TrainingArguments(**updated_attributes)
+    return training_args
 
 
 def get_last_checkpoint(folder: str, incomplete: bool = False) -> Optional[str]:
