@@ -307,7 +307,6 @@ def main(args: ExtendedArgumentParser):
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
-        print(f"Checkpoint: {checkpoint}")
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()
         trainer.log_metrics("train", train_result.metrics)
