@@ -51,14 +51,29 @@ class ExtendedArgumentParser(HfArgumentParser):
             parsed_args.append(data_class(**inputs))
             if len(parsed_args) == 1:
                 parsed_args = parsed_args[0]
+
         return parsed_args
 
     def parse(self) -> Union[DataClassType, Tuple[DataClassType]]:
         if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-            return self.parse_yaml_file(os.path.abspath(sys.argv[1]))
+            parsed_args = self.parse_yaml_file(os.path.abspath(sys.argv[1]))
         elif len(sys.argv) > 2 and sys.argv[1].endswith(".yaml"):
-            return self.parse_yaml_and_args(sys.argv[1], sys.argv[2:])
-        return self.parse_args_into_dataclasses()
+            parsed_args = self.parse_yaml_and_args(sys.argv[1], sys.argv[2:])
+        else:
+            parsed_args = self.parse_args_into_dataclasses()
+
+        # Ensure parsed_args is a tuple
+        if not isinstance(parsed_args, tuple):
+            parsed_args = (parsed_args,)
+
+        # process training_args using get_training_arguments
+        if len(parsed_args) == 3:
+            model_args, data_args, experiment_args = parsed_args
+            training_args = TrainingArguments(output_dir=experiment_args.output_dir)
+            training_args = get_training_arguments(experiment_args, training_args)
+            return model_args, data_args, training_args
+
+        return parsed_args
 
     @staticmethod
     def _cast_type(value: str, target_type: Any) -> Any:
@@ -80,8 +95,7 @@ def get_training_arguments(
     experiment_args: ExperimentArguments, training_args: TrainingArguments
 ) -> TrainingArguments:
     """
-    Checks for attributes of ExperimentArguments in TrainingArguments and returns
-    a TrainingArguments object with those non-null values from ExperimentArguments added.
+    Updates a TrainingArguments object with non-null values from ExperimentArguments.
 
     Args:
         experiment_args (ExperimentArguments): The ExperimentArguments object.
@@ -97,7 +111,8 @@ def get_training_arguments(
         if attr in updated_attributes and value is not None:
             updated_attributes[attr] = value
 
-    return training_args.__class__(**updated_attributes)
+    # Return a new TrainingArguments object with updated attributes
+    return TrainingArguments(**updated_attributes)
 
 
 def get_last_checkpoint(folder: str, incomplete: bool = False) -> Optional[str]:
