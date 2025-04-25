@@ -25,18 +25,20 @@ from transformers import (
     AutoModelForImageClassification,
     TimmWrapperImageProcessor,
     Trainer,
+    TrainingArguments,
     set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import send_example_telemetry
 from transformers.utils.versions import require_version
+
 from karanta.training.classification_args import (
     DataTrainingArguments,
     ModelArguments,
     ExperimentArguments,
 )
 from karanta.data.utils import prepare_mixed_datasets
-from karanta.training.utils import ExtendedArgumentParser
+from karanta.training.utils import ExtendedArgumentParser, get_training_arguments
 
 """ Fine-tuning a 🤗 Transformers model to identify suitable images-text-ocr images that require segmentations"""
 
@@ -55,7 +57,8 @@ def pil_loader(path: str):
 
 
 def main(args: ExtendedArgumentParser):
-    model_args, data_args, training_args = args[0], args[1], args[2]
+    model_args, data_args, experiment_args = args[0], args[1], args[2]
+    training_args = get_training_arguments(experiment_args, TrainingArguments)
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.

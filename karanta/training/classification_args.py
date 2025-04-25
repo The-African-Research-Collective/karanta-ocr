@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING, TrainingArguments
+from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -142,13 +142,13 @@ class ModelArguments:
 
 
 @dataclass
-class ExperimentArguments(TrainingArguments):
+class ExperimentArguments:
     """
     Arguments pertaining to the experiment configuration, replacing TrainingArguments.
     """
 
     output_dir: str = field(
-        default="output/",
+        default="./output",
         metadata={
             "help": "The output directory where the model predictions and checkpoints will be written."
         },
@@ -200,6 +200,15 @@ class ExperimentArguments(TrainingArguments):
     hub_token: str = field(
         default=None, metadata={"help": "The token to use to push to the Model Hub."}
     )
+
+    def post__init__(self):
+        super().__post_init__()
+        if self.push_to_hub and self.hub_model_id is None:
+            raise ValueError(
+                "If `push_to_hub` is True, you must provide a `hub_model_id`."
+            )
+        # write a code that checks for attributes of ExperimentArguments in TrainingArguments and returns training arguments with those non-null values added
+
     # fp16: bool = field(
     #     default=False,
     #     metadata={"help": "Whether to use 16-bit (mixed) precision training."},

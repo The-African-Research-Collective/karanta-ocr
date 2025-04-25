@@ -7,7 +7,9 @@ import shutil
 from typing import Optional, List, Any, Union, Tuple, NewType
 
 from accelerate.logging import get_logger
-from transformers import HfArgumentParser
+from transformers import HfArgumentParser, TrainingArguments
+
+from karanta.training.classification_args import ExperimentArguments
 
 DataClassType = NewType("DataClassType", Any)
 logger = get_logger(__name__)
@@ -72,6 +74,31 @@ class ExtendedArgumentParser(HfArgumentParser):
             raise ValueError(
                 f"Failed to cast value '{value}' to type {target_type}: {e}"
             )
+
+
+def get_training_arguments(
+    experiment_args: ExperimentArguments, training_args: TrainingArguments
+) -> TrainingArguments:
+    """
+    Checks for attributes of ExperimentArguments in TrainingArguments and returns
+    a TrainingArguments object with those non-null values from ExperimentArguments added.
+
+    Args:
+        experiment_args (ExperimentArguments): The ExperimentArguments object.
+        training_args (TrainingArguments): The TrainingArguments object.
+
+    Returns:
+        TrainingArguments: A new TrainingArguments object with updated values.
+    """
+    updated_training_args = training_args.__class__(**vars(training_args))
+
+    # Iterate over attributes in ExperimentArguments
+    for attr, value in vars(experiment_args).items():
+        # Check if the attribute exists in TrainingArguments and is not None
+        if hasattr(updated_training_args, attr) and value is not None:
+            setattr(updated_training_args, attr, value)
+
+    return updated_training_args
 
 
 def get_last_checkpoint(folder: str, incomplete: bool = False) -> Optional[str]:
