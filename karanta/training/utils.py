@@ -104,14 +104,17 @@ def get_training_arguments(
     Returns:
         TrainingArguments: A new TrainingArguments object with updated values.
     """
-    updated_attributes = vars(training_args).copy()
+    valid_keys = set(TrainingArguments.__dataclass_fields__.keys())
 
-    # Iterate over attributes in ExperimentArguments
+    updated_attributes = {
+        key: value for key, value in vars(training_args).items() if key in valid_keys
+    }
+
+    # Update attributes with non-null values from ExperimentArguments
     for attr, value in vars(experiment_args).items():
         if attr in updated_attributes and value is not None:
             updated_attributes[attr] = value
 
-    # Return a new TrainingArguments object with updated attributes
     return TrainingArguments(**updated_attributes)
 
 
