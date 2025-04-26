@@ -1,16 +1,16 @@
 import os
 import json
+import logging
 from typing import List, Optional, Union
 from pathlib import Path
 
 from pdf2image import convert_from_path
-from accelerate import Accelerator
-from accelerate.logging import get_logger
 from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 from huggingface_hub import HfApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-logger = get_logger(__name__)
+
+logger = logging.getLogger(__name__)
 
 
 def prepare_mixed_datasets(
@@ -40,31 +40,6 @@ def prepare_mixed_datasets(
 
     Returns:
         DatasetDict: A dictionary containing the mixed datasets.
-
-    Examples:
-        Using a dictionary for dataset_sources:
-        >>> dataset_sources = {
-        >>>     "dataset1": 0.5,  # Use 50% of dataset1
-        >>>     "dataset2": 1000  # Use up to 1000 samples from dataset2
-        >>> }
-        >>> mixed_datasets = prepare_mixed_datasets(
-        >>>     dataset_sources=dataset_sources,
-        >>>     splits=["train", "test"],
-        >>>     shuffle_data=True,
-        >>>     include_source_column=True
-        >>> )
-
-        Using a list for dataset_sources:
-        >>> dataset_sources = [
-        >>>     "dataset1", 0.5,  # Use 50% of dataset1
-        >>>     "dataset2", 1000  # Use up to 1000 samples from dataset2
-        >>> ]
-        >>> mixed_datasets = prepare_mixed_datasets(
-        >>>     dataset_sources=dataset_sources,
-        >>>     splits=["train", "test"],
-        >>>     shuffle_data=True,
-        >>>     include_source_column=True
-        >>> )
     """
     splits = splits or ["train", "test"]
     configs = configs or [None] * len(dataset_sources)
@@ -150,33 +125,29 @@ def upload_metadata_to_hub(
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(10))
-def push_folder_to_hub(
-    accelerator: Accelerator, folder: str, repo_id: str, branch: Optional[str] = None
-) -> None:
+def push_folder_to_hub(folder: str, repo_id: str, branch: Optional[str] = None) -> None:
     """
     Push a folder to the Hugging Face Hub.
 
     Args:
-        accelerator (Accelerator): Accelerator instance.
         folder (str): Folder to push.
         repo_id (str): Repository ID on the Hugging Face Hub.
         branch (Optional[str]): Branch to push to.
     """
-    if accelerator.is_main_process:
-        api = HfApi()
-        if not api.repo_exists(repo_id):
-            api.create_repo(repo_id, exist_ok=True)
-        if branch:
-            api.create_branch(repo_id, branch, exist_ok=True)
-        api.upload_folder(
-            repo_id=repo_id,
-            folder_path=folder,
-            revision=branch,
-            commit_message="Upload folder",
-        )
-        logger.info(
-            f"Pushed folder to https://huggingface.co/{repo_id}/tree/{branch or 'main'}"
-        )
+    api = HfApi()
+    if not api.repo_exists(repo_id):
+        api.create_repo(repo_id, exist_ok=True)
+    if branch:
+        api.create_branch(repo_id, branch, exist_ok=True)
+    api.upload_folder(
+        repo_id=repo_id,
+        folder_path=folder,
+        revision=branch,
+        commit_message="Upload folder",
+    )
+    logger.info(
+        f"Pushed folder to https://huggingface.co/{repo_id}/tree/{branch or 'main'}"
+    )
 
 
 def split_pdf2image(data_path: Path, output_dir: Path):

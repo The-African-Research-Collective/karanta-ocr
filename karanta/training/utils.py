@@ -1,18 +1,18 @@
 import os
 import sys
+import logging
 import dataclasses
 from dataclasses import dataclass
 import shutil
 
 from typing import Optional, List, Any, Union, Tuple, NewType
 
-from accelerate.logging import get_logger
 from transformers import HfArgumentParser, TrainingArguments
 
 from karanta.training.classification_args import ExperimentArguments
 
 DataClassType = NewType("DataClassType", Any)
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ExtendedArgumentParser(HfArgumentParser):
