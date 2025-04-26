@@ -110,6 +110,12 @@ class ModelArguments:
             + ", ".join(MODEL_TYPES)
         },
     )
+    config_name: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Pretrained config name or path if not the same as model_name"
+        },
+    )
     cache_dir: Optional[str] = field(
         default=None,
         metadata={
@@ -122,6 +128,12 @@ class ModelArguments:
             "help": "Revision of the model to use (can be a branch name, tag name or git commit id)."
         },
     )
+    trust_remote_code: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether or not to trust the remote code when loading the model."
+        },
+    )
     image_processor_name: str = field(
         default=None, metadata={"help": "Name or path of preprocessor config."}
     )
@@ -132,12 +144,6 @@ class ModelArguments:
                 "The token to use as HTTP bearer authorization for remote files. If not specified, will use the token "
                 "generated when running `huggingface-cli login` (stored in `~/.huggingface`)."
             )
-        },
-    )
-    ignore_mismatched_sizes: bool = field(
-        default=False,
-        metadata={
-            "help": "Will enable to load a pretrained model whose head dimensions are different."
         },
     )
 
@@ -191,6 +197,12 @@ class ExperimentArguments:
     do_eval: bool = field(
         default=False,
         metadata={"help": "Whether to run evaluation on the validation set."},
+    )
+    remove_unused_columns: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "Remove columns not required by the model when using an nlp.Dataset."
+        },
     )
     hub_model_id: str = field(
         default=None,

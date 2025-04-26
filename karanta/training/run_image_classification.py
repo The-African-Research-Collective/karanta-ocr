@@ -9,6 +9,7 @@ import evaluate
 import numpy as np
 import torch
 from datasets import load_dataset
+from PIL import Image
 from torchvision.transforms import (
     Compose,
     Lambda,
@@ -18,6 +19,7 @@ from torchvision.transforms import (
     RandomAffine,
     ToTensor,
 )
+import transformers
 from transformers import (
     AutoConfig,
     AutoImageProcessor,
@@ -39,8 +41,22 @@ from karanta.training.utils import ExtendedArgumentParser
 logger = logging.getLogger(__name__)
 
 
+def pil_loader(path: str):
+    with open(path, "rb") as f:
+        im = Image.open(f)
+        return im.convert("RGB")
+
+
 def main(args: ExtendedArgumentParser):
     model_args, data_args, training_args = args[0], args[1], args[2]
+
+    if isinstance(training_args.learning_rate, str):
+        try:
+            training_args.learning_rate = float(training_args.learning_rate)
+        except ValueError:
+            raise ValueError(
+                f"Learning rate: {training_args.learning_rate} is not a float. Please provide a float"
+            )
 
     # Setup logging
     logging.basicConfig(
@@ -48,8 +64,22 @@ def main(args: ExtendedArgumentParser):
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
+    if training_args.should_log:
+        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
+        transformers.utils.logging.set_verbosity_info()
 
-    logger.setLevel(logging.INFO)
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, "
+        + f"distributed training: {training_args.parallel_mode.value == 'distributed'}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
 
     # Detecting last checkpoint.
     last_checkpoint = None
@@ -90,6 +120,7 @@ def main(args: ExtendedArgumentParser):
             data_args.dataset_name,
             cache_dir=model_args.cache_dir,
             token=model_args.token,
+            trust_remote_code=model_args.trust_remote_code,
         )
     else:
         data_files = {}
@@ -127,26 +158,35 @@ def main(args: ExtendedArgumentParser):
         return {"pixel_values": pixel_values, "labels": labels}
 
     # If we don't have a validation split, split off a percentage of train as validation.
+    if "valid" in dataset.keys():
+        dataset["validation"] = dataset["valid"]
+        dataset.pop("valid")
+
     if "validation" not in dataset.keys() and data_args.train_val_split:
         split = dataset["train"].train_test_split(data_args.train_val_split)
         dataset["train"] = split["train"]
         dataset["validation"] = split["test"]
 
+    # Prepare label mappings.
+    # We'll include these in the model's config to get human readable labels in the Inference API.
     labels = dataset["train"].features[data_args.label_column_name].names
     label2id, id2label = {}, {}
     for i, label in enumerate(labels):
         label2id[label] = str(i)
         id2label[str(i)] = label
 
+    # Load the accuracy metric from the datasets package
     metric = evaluate.load("accuracy", cache_dir=model_args.cache_dir)
 
+    # Define our compute_metrics function. It takes an `EvalPrediction` object (a namedtuple with a
+    # predictions and label_ids field) and has to return a dictionary string to float.
     def compute_metrics(p):
         return metric.compute(
             predictions=np.argmax(p.predictions, axis=1), references=p.label_ids
         )
 
     config = AutoConfig.from_pretrained(
-        model_args.model_name_or_path,
+        model_args.config_name or model_args.model_name_or_path,
         num_labels=len(labels),
         label2id=label2id,
         id2label=id2label,
@@ -154,6 +194,7 @@ def main(args: ExtendedArgumentParser):
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         token=model_args.token,
+        trust_remote_code=model_args.trust_remote_code,
     )
     model = AutoModelForImageClassification.from_pretrained(
         model_args.model_name_or_path,
@@ -161,13 +202,14 @@ def main(args: ExtendedArgumentParser):
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         token=model_args.token,
-        ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+        trust_remote_code=model_args.trust_remote_code,
     )
     image_processor = AutoImageProcessor.from_pretrained(
         model_args.image_processor_name or model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         token=model_args.token,
+        trust_remote_code=model_args.trust_remote_code,
     )
 
     # Define torchvision transforms to be applied to each image.
@@ -207,6 +249,7 @@ def main(args: ExtendedArgumentParser):
         )
 
     def train_transforms(example_batch):
+        """Apply _train_transforms across a batch."""
         example_batch["pixel_values"] = [
             _train_transforms(pil_img.convert("RGB"))
             for pil_img in example_batch[data_args.image_column_name]
@@ -214,6 +257,7 @@ def main(args: ExtendedArgumentParser):
         return example_batch
 
     def val_transforms(example_batch):
+        """Apply _val_transforms across a batch."""
         example_batch["pixel_values"] = [
             _val_transforms(pil_img.convert("RGB"))
             for pil_img in example_batch[data_args.image_column_name]
@@ -221,25 +265,64 @@ def main(args: ExtendedArgumentParser):
         return example_batch
 
     if training_args.do_train:
+        if "train" not in dataset:
+            raise ValueError("--do_train requires a train dataset")
+        if data_args.max_train_samples is not None:
+            dataset["train"] = (
+                dataset["train"]
+                .shuffle(seed=training_args.seed)
+                .select(range(data_args.max_train_samples))
+            )
+        # Set the training transforms
         dataset["train"].set_transform(train_transforms)
 
     if training_args.do_eval:
+        if "validation" not in dataset:
+            raise ValueError("--do_eval requires a validation dataset")
+        # Set the validation transforms
         dataset["validation"].set_transform(val_transforms)
 
+    # Initialize our trainer
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=dataset["train"] if training_args.do_train else None,
         eval_dataset=dataset["validation"] if training_args.do_eval else None,
         compute_metrics=compute_metrics,
+        processing_class=image_processor,
         data_collator=collate_fn,
     )
 
+    # Training
     if training_args.do_train:
-        trainer.train()
+        checkpoint = None
+        if training_args.resume_from_checkpoint is not None:
+            checkpoint = training_args.resume_from_checkpoint
+        elif last_checkpoint is not None:
+            checkpoint = last_checkpoint
+        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        trainer.save_model()
+        trainer.log_metrics("train", train_result.metrics)
+        trainer.save_metrics("train", train_result.metrics)
+        trainer.save_state()
 
+    # Evaluation
     if training_args.do_eval:
-        trainer.evaluate()
+        metrics = trainer.evaluate()
+        trainer.log_metrics("eval", metrics)
+        trainer.save_metrics("eval", metrics)
+
+    # Write model card and (optionally) push to hub
+    kwargs = {
+        "finetuned_from": model_args.model_name_or_path,
+        "tasks": "image-classification",
+        "dataset": data_args.dataset_name,
+        "tags": ["image-classification", "vision"],
+    }
+    if training_args.push_to_hub:
+        trainer.push_to_hub(**kwargs)
+    else:
+        trainer.create_model_card(**kwargs)
 
 
 if __name__ == "__main__":

@@ -5,18 +5,17 @@ model_name_or_path: google/vit-base-patch16-224-in21k
 model_type: null
 cache_dir: null
 model_revision: null
-ignore_mismatched_sizes: false
 image_processor_name: null
 # =============================================================================
 # ========================= Data Arguments ===================================
 # =============================================================================
-dataset_name: taresco/newspaper_ocr
+dataset_name: ayerr/plant-disease-classification
 dataset_mixer:  null
 dataset_mixer_list: null
 train_dir: null
 validation_dir: null
-image_column_name: image
-label_column_name: label
+# image_column_name: image
+# label_column_name: label
 max_train_samples: null
 train_val_split: 0.15
 # =============================================================================
@@ -32,5 +31,5 @@ num_train_epochs: 3
 learning_rate: 5e-5
 seed: 42
 push_to_hub: True
-hub_model_id: newspaper_segmentation_model
+hub_model_id: dummy_classification_model
 hub_token: null
