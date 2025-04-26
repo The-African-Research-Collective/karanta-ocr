@@ -10,7 +10,7 @@ image_processor_name: null
 # =============================================================================
 # ========================= Data Arguments ===================================
 # =============================================================================
-dataset_name: huggingface/documentation-images
+dataset_name: taresco/newspaper_ocr
 dataset_mixer:  null
 dataset_mixer_list: null
 train_dir: null
@@ -32,5 +32,5 @@ num_train_epochs: 3
 learning_rate: 5e-5
 seed: 42
 push_to_hub: True
-hub_model_id: dummy_segmentation_model
+hub_model_id: newspaper_segmentation_model
 hub_token: null
