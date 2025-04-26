@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # modified from https://github.com/huggingface/transformers/tree/main/examples/pytorch/image-classification
+
 import logging
 import os
 import sys
@@ -9,18 +10,19 @@ import numpy as np
 import torch
 from datasets import load_dataset
 from torchvision.transforms import (
-    CenterCrop,
     Compose,
     Lambda,
     Normalize,
     Resize,
+    RandomRotation,
+    RandomAffine,
     ToTensor,
 )
-
 from transformers import (
     AutoConfig,
     AutoImageProcessor,
     AutoModelForImageClassification,
+    TimmWrapperImageProcessor,
     Trainer,
     set_seed,
 )
@@ -168,28 +170,41 @@ def main(args: ExtendedArgumentParser):
         token=model_args.token,
     )
 
-    if hasattr(image_processor, "image_mean") and hasattr(image_processor, "image_std"):
-        normalize = Normalize(
-            mean=image_processor.image_mean, std=image_processor.image_std
-        )
+    # Define torchvision transforms to be applied to each image.
+    if isinstance(image_processor, TimmWrapperImageProcessor):
+        _train_transforms = image_processor.train_transforms
+        _val_transforms = image_processor.val_transforms
     else:
-        normalize = Lambda(lambda x: x)
+        if "shortest_edge" in image_processor.size:
+            size = image_processor.size["shortest_edge"]
+        else:
+            size = (image_processor.size["height"], image_processor.size["width"])
 
-    _train_transforms = Compose(
-        [
-            Resize(image_processor.size["shortest_edge"]),
-            ToTensor(),
-            normalize,
-        ]
-    )
-    _val_transforms = Compose(
-        [
-            Resize(image_processor.size["shortest_edge"]),
-            CenterCrop(image_processor.size["shortest_edge"]),
-            ToTensor(),
-            normalize,
-        ]
-    )
+        # Create normalization transform
+        if hasattr(image_processor, "image_mean") and hasattr(
+            image_processor, "image_std"
+        ):
+            normalize = Normalize(
+                mean=image_processor.image_mean, std=image_processor.image_std
+            )
+        else:
+            normalize = Lambda(lambda x: x)
+        _train_transforms = Compose(
+            [
+                Resize(size),
+                RandomRotation(degrees=5),
+                RandomAffine(degrees=5, translate=(0.1, 0.1)),
+                ToTensor(),
+                normalize,
+            ]
+        )
+        _val_transforms = Compose(
+            [
+                Resize(size),
+                ToTensor(),
+                normalize,
+            ]
+        )
 
     def train_transforms(example_batch):
         example_batch["pixel_values"] = [

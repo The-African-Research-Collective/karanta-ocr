@@ -4,5 +4,5 @@ CONFIG=$1
 
 echo "Fine-tuning model with configuration: $CONFIG"
 
-# Run the image classification script with the specified configuration
-python karanta/training/run_image_classification.py --config $CONFIG
+# Pass the YAML file directly as the first argument
+python karanta/training/run_image_classification.py $CONFIG

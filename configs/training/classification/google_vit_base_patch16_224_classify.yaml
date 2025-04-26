@@ -1,36 +1,36 @@
 # =============================================================================
 # ========================= Model Arguments ===================================
 # =============================================================================
-model_name_or_path: "google/vit-base-patch16-224-in21k"  # Pretrained model name or path
-model_type: null  # Model type (e.g., vit, deit, etc.)
-cache_dir: null  # Directory to cache the model
-model_revision: null  # Model revision (e.g., branch name, tag name, or commit id)
-ignore_mismatched_sizes: false  # Whether to ignore size mismatches when loading the model
-image_processor_name: null  # Optional custom image processor name
+model_name_or_path: google/vit-base-patch16-224-in21k
+model_type: null
+cache_dir: null
+model_revision: null
+ignore_mismatched_sizes: false
+image_processor_name: null
 # =============================================================================
 # ========================= Data Arguments ===================================
 # =============================================================================
-dataset_name: "taresco/newspaper_ocr"  # Dataset name or list of datasets
-dataset_mixer:  null # Dictionary of datasets to mix
-dataset_mixer_list: null  # Alternative: List of datasets to mix
-train_dir: null  # Directory for training data
-validation_dir: null  # Directory for validation data
-image_column_name: "image"  # Column name for images in the dataset
-label_column_name: "label"  # Column name for labels in the dataset
-max_train_samples: null  # Maximum number of training samples
-train_val_split: 0.15  # Fraction of training data to use for validation
+dataset_name: huggingface/documentation-images
+dataset_mixer:  null
+dataset_mixer_list: null
+train_dir: null
+validation_dir: null
+image_column_name: image
+label_column_name: label
+max_train_samples: null
+train_val_split: 0.15
 # =============================================================================
 # ========================= Experiments Arguments =============================
 # =============================================================================  
-output_dir: "./output"  # Directory to save model checkpoints and outputs
-overwrite_output_dir: false  # Whether to overwrite the output directory
-do_train: true  # Whether to perform training
-do_eval: true  # Whether to perform evaluation
-per_device_train_batch_size: 16  # Batch size for training
-per_device_eval_batch_size: 16  # Batch size for evaluation
-num_train_epochs: 3  # Number of training epochs
-learning_rate: 5e-5  # Learning rate
-seed: 42  # Random seed for reproducibility
-push_to_hub: True  # Whether to push the model to the Hugging Face Hub
-hub_model_id: "taresco/newspaper_segmentation_model"
-hub_token: null  # Optional token for private models
+output_dir: ./output
+overwrite_output_dir: false
+do_train: true
+do_eval: true
+per_device_train_batch_size: 16
+per_device_eval_batch_size: 16
+num_train_epochs: 3
+learning_rate: 5e-5
+seed: 42
+push_to_hub: True
+hub_model_id: dummy_segmentation_model
+hub_token: null

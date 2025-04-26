@@ -17,73 +17,85 @@ logger = logging.getLogger(__name__)
 
 class ExtendedArgumentParser(HfArgumentParser):
     def parse_yaml_and_args(
-        self, yaml_file: str, additional_args: Optional[List[str]] = None
+        self, yaml_arg: str, other_args: Optional[List[str]] = None
     ) -> List[dataclass]:
         """
-        Parse a YAML file and override its values with command-line arguments.
+        Parse a YAML file and overwrite the default/loaded values with the values provided to the command line.
 
         Args:
-            yaml_file (str): Path to the YAML configuration file.
-            additional_args (Optional[List[str]]): Additional command-line arguments.
+            yaml_arg (`str`):
+                The path to the config file used.
+            other_args (`List[str]`, *optional*):
+                A list of strings to parse as command line arguments, e.g. ['--arg=val', '--arg2=val2'].
 
         Returns:
-            List[dataclass]: Parsed dataclasses with updated values.
+            [`List[dataclass]`]: A list of dataclasses with the values from the YAML file and the command line.
         """
-        yaml_args = self.parse_yaml_file(os.path.abspath(yaml_file))
-        parsed_args = []
+        # Parse the YAML file
+        arg_list = self.parse_yaml_file(os.path.abspath(yaml_arg))
 
-        additional_args = {
-            arg.split("=")[0].strip("-"): arg.split("=")[1]
-            for arg in additional_args or []
+        outputs = []
+        other_args = {
+            arg.split("=")[0].strip("-"): arg.split("=")[1] for arg in other_args or []
         }
         used_args = {}
 
-        for yaml_data, data_class in zip(yaml_args, self.dataclass_types):
-            keys = {field.name for field in dataclasses.fields(yaml_data) if field.init}
-            inputs = {key: getattr(yaml_data, key) for key in keys}
-            for arg, value in additional_args.items():
+        # Overwrite the default/loaded values with the values provided via the command line
+        for data_yaml, data_class in zip(arg_list, self.dataclass_types):
+            keys = {f.name for f in dataclasses.fields(data_class) if f.init}
+            inputs = {k: v for k, v in vars(data_yaml).items() if k in keys}
+            for arg, val in other_args.items():
                 if arg in keys:
-                    base_type = yaml_data.__dataclass_fields__[arg].type
-                    inputs[arg] = self._cast_type(value, base_type)
-                    if arg in used_args:
-                        raise ValueError(f"Duplicate argument provided: {arg}")
-                    used_args[arg] = value
-            parsed_args.append(data_class(**inputs))
-            if len(parsed_args) == 1:
-                parsed_args = parsed_args[0]
+                    base_type = data_class.__dataclass_fields__[arg].type
+                    # Cast type for ints, floats, lists, and bools
+                    if base_type in [int, float]:
+                        inputs[arg] = base_type(val)
+                    elif base_type == List[str]:
+                        inputs[arg] = [str(v) for v in val.split(",")]
+                    elif base_type is bool:
+                        inputs[arg] = val.lower() in ["true", "1"]
+                    else:
+                        inputs[arg] = val
 
-        return parsed_args
+                    if arg not in used_args:
+                        used_args[arg] = val
+                    else:
+                        raise ValueError(
+                            f"Duplicate argument provided: {arg}, may cause unexpected behavior"
+                        )
+
+            obj = data_class(**inputs)
+            outputs.append(obj)
+
+        return outputs
 
     def parse(self) -> Union[DataClassType, Tuple[DataClassType]]:
-        if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
-            parsed_args = self.parse_yaml_file(os.path.abspath(sys.argv[1]))
-        elif len(sys.argv) > 2 and sys.argv[1].endswith(".yaml"):
-            parsed_args = self.parse_yaml_and_args(sys.argv[1], sys.argv[2:])
-        else:
-            parsed_args = self.parse_args_into_dataclasses()
+        """
+        Parse arguments from a YAML configuration file or command-line arguments.
 
-        if len(parsed_args) == 3:
-            model_args, data_args, experiment_args = parsed_args
+        Returns:
+            Union[DataClassType, Tuple[DataClassType]]: Parsed dataclasses.
+        """
+        if len(sys.argv) == 2 and sys.argv[1].endswith(".yaml"):
+            output = self.parse_yaml_file(os.path.abspath(sys.argv[1]))
+        elif len(sys.argv) > 2 and sys.argv[1].endswith(".yaml"):
+            output = self.parse_yaml_and_args(
+                os.path.abspath(sys.argv[1]), sys.argv[2:]
+            )
+        else:
+            # Parse command-line arguments only
+            output = self.parse_args_into_dataclasses()
+
+        if len(output) == 3:
+            model_args, data_args, experiment_args = output
             training_args = TrainingArguments(output_dir=experiment_args.output_dir)
             training_args = get_training_arguments(experiment_args, training_args)
             return model_args, data_args, training_args
 
-        return parsed_args
-
-    @staticmethod
-    def _cast_type(value: str, target_type: Any) -> Any:
-        try:
-            if target_type in [int, float]:
-                return target_type(value)
-            if target_type == List[str]:
-                return value.split(",")
-            if target_type is bool:
-                return value.lower() in ["true", "1"]
-            return value
-        except ValueError as e:
-            raise ValueError(
-                f"Failed to cast value '{value}' to type {target_type}: {e}"
-            )
+        # Return a single dataclass if only one is parsed
+        if len(output) == 1:
+            output = output[0]
+        return output
 
 
 def get_training_arguments(

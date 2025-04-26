@@ -61,11 +61,12 @@ class DataTrainingArguments:
     )
 
     def __post_init__(self):
+        print(self.dataset_name)
         if (
             self.dataset_name is None
             and self.dataset_mixer is None
             and self.dataset_mixer_list is None
-            and (self.train_dir is None and self.validation_dir is None)
+            and self.train_dir is None
         ):
             raise ValueError(
                 "You must specify either a dataset name from the hub or a train and/or validation directory."
