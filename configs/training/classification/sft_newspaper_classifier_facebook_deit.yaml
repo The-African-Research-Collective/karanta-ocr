@@ -1,0 +1,35 @@
+# =============================================================================
+# ========================= Model Arguments ===================================
+# =============================================================================
+model_name_or_path: facebook/deit-base-distilled-patch16-224
+model_type: null
+cache_dir: null
+model_revision: null
+image_processor_name: null
+# =============================================================================
+# ========================= Data Arguments ===================================
+# =============================================================================
+dataset_name: taresco/newspaper_ocr
+dataset_mixer:  null
+dataset_mixer_list: null
+train_dir: null
+validation_dir: null
+image_column_name: image
+label_column_name: label
+max_train_samples: null
+train_val_split: 0.15
+# =============================================================================
+# ========================= Experiments Arguments =============================
+# =============================================================================  
+output_dir: ./output
+overwrite_output_dir: false
+do_train: true
+do_eval: true
+per_device_train_batch_size: 16
+per_device_eval_batch_size: 16
+num_train_epochs: 3
+learning_rate: 5e-5
+seed: 42
+push_to_hub: True
+hub_model_id: taresco/newspaper_classifier_deit
+hub_token: null
