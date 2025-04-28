@@ -199,6 +199,7 @@ def main(args: ExtendedArgumentParser):
     model = AutoModelForImageClassification.from_pretrained(
         model_args.model_name_or_path,
         config=config,
+        ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         token=model_args.token,

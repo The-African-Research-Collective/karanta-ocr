@@ -1,7 +1,7 @@
 # =============================================================================
 # ========================= Model Arguments ===================================
 # =============================================================================
-model_name_or_path: facebook/levit-128S
+model_name_or_path: nvidia/mit-b0
 model_type: null
 cache_dir: null
 model_revision: null
@@ -31,5 +31,5 @@ num_train_epochs: 3
 learning_rate: 5e-5
 seed: 42
 push_to_hub: True
-hub_model_id: taresco/newspaper_classifier_levit
+hub_model_id: taresco/newspaper_classifier_segformer
 hub_token: null

@@ -1,7 +1,7 @@
 # =============================================================================
 # ========================= Model Arguments ===================================
 # =============================================================================
-model_name_or_path: google/vit-base-patch16-224-in21k
+model_name_or_path:  google/vit-base-patch16-224
 model_type: null
 cache_dir: null
 model_revision: null
@@ -9,7 +9,7 @@ image_processor_name: null
 # =============================================================================
 # ========================= Data Arguments ===================================
 # =============================================================================
-dataset_name: ayerr/plant-disease-classification
+dataset_name: taresco/newspaper_ocr
 dataset_mixer:  null
 dataset_mixer_list: null
 train_dir: null

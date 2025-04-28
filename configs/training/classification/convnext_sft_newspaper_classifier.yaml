@@ -1,7 +1,7 @@
 # =============================================================================
 # ========================= Model Arguments ===================================
 # =============================================================================
-model_name_or_path: facebook/deit-base-distilled-patch16-224
+model_name_or_path: facebook/convnextv2-tiny-1k-224
 model_type: null
 cache_dir: null
 model_revision: null
@@ -31,5 +31,5 @@ num_train_epochs: 3
 learning_rate: 5e-5
 seed: 42
 push_to_hub: True
-hub_model_id: taresco/newspaper_classifier_deit
+hub_model_id: taresco/newspaper_classifier_covnext
 hub_token: null
