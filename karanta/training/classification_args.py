@@ -128,6 +128,12 @@ class ModelArguments:
             "help": "Revision of the model to use (can be a branch name, tag name or git commit id)."
         },
     )
+    ignore_mismatched_sizes: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether or not to ignore the size mismatch between the model and the checkpoint."
+        },
+    )
     trust_remote_code: bool = field(
         default=False,
         metadata={
