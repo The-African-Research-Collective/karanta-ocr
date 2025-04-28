@@ -217,8 +217,11 @@ def main(args: ExtendedArgumentParser):
     if isinstance(image_processor, TimmWrapperImageProcessor):
         _train_transforms = image_processor.train_transforms
         _val_transforms = image_processor.val_transforms
-
-        size = (image_processor.size["height"], image_processor.size["width"])
+    else:
+        if "shortest_edge" in image_processor.size:
+            size = image_processor.size["shortest_edge"]
+        else:
+            size = (image_processor.size["height"], image_processor.size["width"])
 
         # Create normalization transform
         if hasattr(image_processor, "image_mean") and hasattr(
