@@ -17,7 +17,12 @@ pillow = "^11.1.0"
 accelerate = "^1.6.0"
 pkginfo = "^1.12.1.2"
 scikit-learn = "^1.6.1"
+tenacity = "^9.1.2"
+transformers = "^4.51.3"
 
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
 
 [build-system]
 requires = ["poetry-core"]
