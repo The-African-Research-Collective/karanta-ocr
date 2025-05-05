@@ -151,4 +151,7 @@ def push_folder_to_hub(folder: str, repo_id: str, branch: Optional[str] = None) 
 
 
 def split_pdf2image(data_path: Path, output_dir: Path):
+    """
+    Convert PDF files to images using pdf2image.
+    """
     return convert_from_path(data_path, output_folder=output_dir)
