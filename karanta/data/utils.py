@@ -154,5 +154,4 @@ def split_pdf2image(data_path: Path, output_dir: Path):
     """
     Convert PDF files to images using pdf2image.
     """
-    print(f"Converting {data_path} to images...")
     return convert_from_path(data_path, output_folder=output_dir)
