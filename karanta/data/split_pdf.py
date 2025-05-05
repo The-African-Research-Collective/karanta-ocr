@@ -1,15 +1,10 @@
-"""
-This script is used to convert PDF files to images.
-"""
-
 import os
 import logging
-import tempfile
-from pathlib import Path
 import argparse
-from multiprocessing import Pool, cpu_count
 
-from karanta.data.utils import convert_pdf2image
+from pathlib import Path
+from pypdf import PdfReader, PdfWriter
+from multiprocessing import Pool, cpu_count
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,28 +14,29 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def process_single_pdf(pdf_path, output_base_path, output_format):
+def process_single_pdf(pdf_path, output_base_path):
     """Process a single PDF file."""
     full_path, item = pdf_path
-    combined_pages = []
 
     try:
         logger.info(f"Processing {item}")
-        pdf_basename = os.path.splitext(item)[0]
+        with open(full_path, "rb") as pdf_file:
+            reader = PdfReader(pdf_file)
+            page = 0
+            total_pages = len(reader.pages)
 
-        with tempfile.TemporaryDirectory() as path:
-            pages = convert_pdf2image(data_path=full_path, output_dir=path)
+            logger.info(f"Processing {item} with {total_pages} pages")
 
-            # Attach the PDF basename to each page
-            for page in pages:
-                combined_pages.append((page, pdf_basename))
+            while page < total_pages:
+                writer = PdfWriter()
+                writer.add_page(reader.pages[page])
 
-            # Save pages
-            for idx, (page, pdf_basename) in enumerate(combined_pages):
-                filename = f"{pdf_basename}_pg_{idx}.{output_format.lower()}"
-                save_path = output_base_path / filename
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                page.save(save_path, output_format)
+                # Save the current page to a new PDF file
+                output_pdf_path = output_base_path / f"{item}_page_{page}.pdf"
+                with open(output_pdf_path, "wb") as output_pdf_file:
+                    writer.write(output_pdf_file)
+
+                page += 1
 
         return item, True
     except Exception as e:
@@ -50,7 +46,6 @@ def process_single_pdf(pdf_path, output_base_path, output_format):
 
 def main(args):
     output_base_path = Path(args.output_base_path)
-    output_format = args.output_format.upper()
 
     # Collect all PDF files to process
     pdf_files = []
@@ -82,9 +77,7 @@ def main(args):
         results = []
         for pdf_path in pdf_files:
             results.append(
-                pool.apply_async(
-                    process_single_pdf, args=(pdf_path, output_base_path, output_format)
-                )
+                pool.apply_async(process_single_pdf, args=(pdf_path, output_base_path))
             )
 
         # Collect and log results
@@ -110,12 +103,6 @@ if __name__ == "__main__":
         "--output_path",
         required=True,
         help="Path to the directory to save output images.",
-    )
-    parser.add_argument(
-        "--output_format",
-        default="JPEG",
-        help="Image format for output files (default: JPEG). Supported formats: JPEG, PNG, BMP, GIF, TIFF, WEBP, PDF",
-        choices=["JPEG", "PNG", "BMP", "GIF", "TIFF", "WEBP", "PDF"],
     )
     parser.add_argument(
         "--num_processes",
