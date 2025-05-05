@@ -4,10 +4,15 @@ import logging
 import dataclasses
 from dataclasses import dataclass
 import shutil
-
 from typing import Optional, List, Any, Union, Tuple, NewType
 
+import cv2
+import torch
+from torch import nn
+import matplotlib.pyplot as plt
+import numpy as np
 from transformers import HfArgumentParser, TrainingArguments
+from scipy.ndimage import label, find_objects
 
 from karanta.training.classification_args import ExperimentArguments
 
@@ -159,3 +164,103 @@ def clean_old_checkpoints(output_dir: str, keep_last_n: int) -> None:
     for checkpoint in checkpoints[:-keep_last_n]:
         shutil.rmtree(os.path.join(output_dir, checkpoint))
         logger.info(f"Removed checkpoint: {checkpoint}")
+
+
+def reduce_labels_transform(labels: np.ndarray, **kwargs) -> np.ndarray:
+    """Set `0` label (whitespace) to 255 (ignored) and keep other labels unchanged.
+
+    Example:
+        Initial class labels:         0 - whitespace; 1 - tables; 2 - logos; 3 - photos; 4 - articles;
+        Transformed class labels:   255 - whitespace; 1 - tables; 2 - logos; 3 - photos; 4 - articles;
+
+    **kwargs are required to use this function with albumentations.
+    """
+    labels[labels == 0] = 255  # Set the "whitespace" label to 255 (ignored by loss)
+    return labels
+
+
+def masks_to_bounding_boxes(segmentation_mask):
+    """
+    Converts a segmentation mask into bounding boxes.
+
+    Args:
+        segmentation_mask (numpy.ndarray): The segmentation mask output by the model.
+                                           Each pixel has a class label (e.g., 0 for background, 1 for articles).
+
+    Returns:
+        bounding_boxes (list): A list of bounding boxes, where each box is represented as
+                               (label, x_min, y_min, x_max, y_max).
+    """
+    bounding_boxes = []
+
+    # Exclude the background (label 0)
+    for label_id in np.unique(segmentation_mask):
+        if label_id == 0:  # Skip background
+            continue
+
+        # Create a binary mask for the current label
+        binary_mask = segmentation_mask == label_id
+
+        # Find connected components
+        labeled_mask, num_features = label(binary_mask)
+
+        # Extract bounding boxes for each connected component
+        slices = find_objects(labeled_mask)
+        for i, slice_ in enumerate(slices):
+            if slice_ is not None:
+                y_min, y_max = slice_[0].start, slice_[0].stop
+                x_min, x_max = slice_[1].start, slice_[1].stop
+                bounding_boxes.append((label_id, x_min, y_min, x_max, y_max))
+
+    return bounding_boxes
+
+
+def postprocess_and_get_bounding_boxes(eval_pred):
+    logits, labels = eval_pred
+    logits_tensor = torch.from_numpy(logits)
+    # Scale the logits to the size of the label
+    logits_tensor = nn.functional.interpolate(
+        logits_tensor,
+        size=labels.shape[-2:],
+        mode="bilinear",
+        align_corners=False,
+    ).argmax(dim=1)
+
+    pred_labels = logits_tensor.detach().cpu().numpy()
+
+    # Convert masks to bounding boxes
+    all_bounding_boxes = []
+    for mask in pred_labels:
+        bounding_boxes = masks_to_bounding_boxes(mask)
+        all_bounding_boxes.append(bounding_boxes)
+
+    return all_bounding_boxes
+
+
+def visualize_bounding_boxes(image, bounding_boxes):
+    """
+    Visualizes bounding boxes on the original image.
+
+    Args:
+        image (numpy.ndarray): The original image.
+        bounding_boxes (list): A list of bounding boxes (label, x_min, y_min, x_max, y_max).
+    """
+    image_with_boxes = image.copy()
+    for label_id, x_min, y_min, x_max, y_max in bounding_boxes:
+        # Draw the bounding box
+        cv2.rectangle(image_with_boxes, (x_min, y_min), (x_max, y_max), (255, 0, 0), 2)
+        # Add the label
+        cv2.putText(
+            image_with_boxes,
+            f"Label {label_id}",
+            (x_min, y_min - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 0, 0),
+            1,
+        )
+
+    # Display the image
+    plt.imshow(image_with_boxes)
+    plt.axis("off")
+    plt.show()

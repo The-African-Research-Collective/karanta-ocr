@@ -1,22 +1,15 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from transformers import MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING
-
-MODEL_CONFIG_CLASSES = list(MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING.keys())
-MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
-
 
 @dataclass
 class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
-    Using `HfArgumentParser` we can turn this class into argparse arguments to be able to specify
-    them on the command line.
     """
 
     dataset_name: Optional[str] = field(
-        default=None,
+        default="segments/sidewalk-semantic",
         metadata={
             "help": "Name of a dataset from the hub (could be your own, possibly private dataset hosted on the hub)."
         },
@@ -59,6 +52,18 @@ class DataTrainingArguments:
             "help": "The name of the dataset column containing the labels. Defaults to 'label'."
         },
     )
+    do_reduce_labels: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "Whether or not to reduce all labels by 1 and replace background by 255."
+        },
+    )
+    reduce_labels: Optional[bool] = field(
+        default=False,
+        metadata={
+            "help": "Whether or not to reduce all labels by 1 and replace background by 255."
+        },
+    )
 
     def __post_init__(self):
         print(self.dataset_name)
@@ -98,16 +103,9 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        default="google/vit-base-patch16-224-in21k",
+        default="nvidia/mit-b0",
         metadata={
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
-        },
-    )
-    model_type: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": "If training from scratch, pass a model type from the list: "
-            + ", ".join(MODEL_TYPES)
         },
     )
     config_name: Optional[str] = field(
@@ -128,19 +126,7 @@ class ModelArguments:
             "help": "Revision of the model to use (can be a branch name, tag name or git commit id)."
         },
     )
-    ignore_mismatched_sizes: bool = field(
-        default=True,
-        metadata={
-            "help": "Whether or not to ignore the size mismatch between the model and the checkpoint."
-        },
-    )
-    trust_remote_code: bool = field(
-        default=False,
-        metadata={
-            "help": "Whether or not to trust the remote code when loading the model."
-        },
-    )
-    image_processor_name: Optional[str] = field(
+    image_processor_name: str = field(
         default=None, metadata={"help": "Name or path of preprocessor config."}
     )
     token: str = field(
@@ -149,6 +135,16 @@ class ModelArguments:
             "help": (
                 "The token to use as HTTP bearer authorization for remote files. If not specified, will use the token "
                 "generated when running `huggingface-cli login` (stored in `~/.huggingface`)."
+            )
+        },
+    )
+    trust_remote_code: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Whether to trust the execution of code from datasets/models defined on the Hub."
+                " This option should only be set to `True` for repositories you trust and in which you have read the"
+                " code, as it will execute code present on the Hub on your local machine."
             )
         },
     )

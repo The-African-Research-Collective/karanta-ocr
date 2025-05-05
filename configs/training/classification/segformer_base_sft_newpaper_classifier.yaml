@@ -21,7 +21,7 @@ train_val_split: 0.15
 # =============================================================================
 # ========================= Experiments Arguments =============================
 # =============================================================================  
-output_dir: ./output
+output_dir: output/
 overwrite_output_dir: false
 do_train: true
 do_eval: true

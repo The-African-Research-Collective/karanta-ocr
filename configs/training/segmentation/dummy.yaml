@@ -1,0 +1,35 @@
+# =============================================================================
+# ========================= Model Arguments ===================================
+# =============================================================================
+model_name_or_path: nvidia/mit-b0
+config_name: null 
+image_processor_name: null 
+cache_dir: null
+model_revision: null
+token: null  
+trust_remote_code: false 
+# =============================================================================
+# ========================= Data Arguments ===================================
+# =============================================================================
+dataset_name: "imagefolder"  # Dataset type
+train_dir: null
+validation_dir: null
+dataset_mixer: null  
+dataset_mixer_list: null 
+do_reduce_labels: true 
+train_val_split: 0.15  
+max_train_samples: null 
+# =============================================================================
+# ========================= Experiments Arguments =============================
+# =============================================================================  
+output_dir: output/
+overwrite_output_dir: false 
+do_train: true 
+do_eval: true 
+per_device_train_batch_size: 16
+per_device_eval_batch_size: 16
+learning_rate: 5e-5 
+num_train_epochs: 10
+seed: 42  
+push_to_hub: true 
+hub_model_id: taresco/newspaper_segformer
