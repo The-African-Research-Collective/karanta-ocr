@@ -11,7 +11,30 @@ Karanta means "read" in Hausa, a language spoken in Nigeria and other West Afric
 ## OCR Pipeline
 
 ### Document Type Classification
-...
+The classifier identifies documents that require segmentation as segment and those that do not as no_segment. The model is available on the HuggingFace library and can be accessed as described below:
+
+```python
+from transformers import pipeline
+
+# Load the pipeline
+pipe = pipeline("image-classification", model="taresco/newspaper_classifier_segformer")
+
+# Classify an image
+image_path = "path_to_your_image.jpg"
+result = pipe(image_path)
+print(result)
+```
+
+#### Example Output:
+The `result` will be a list of dictionaries, where each dictionary contains:
+
+The predicted label (`segment` or `no_segment`).
+The confidence score for the prediction.
+For example:
+
+```python
+[{'label': 'no_segment', 'score': 0.9999988079071045}, {'label': 'segment', 'score': 1.2489092569012428e-06}]
+```
 
 ### Document Article Segmentation
 ...
