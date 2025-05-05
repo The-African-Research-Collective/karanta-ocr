@@ -1,5 +1,5 @@
 def main():
-    print("Hello from newspaper-parser!")
+    print("Hello from Karanta OCR!")
 
 
 if __name__ == "__main__":
