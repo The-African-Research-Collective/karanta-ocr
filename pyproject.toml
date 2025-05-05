@@ -20,6 +20,9 @@ scikit-learn = "^1.6.1"
 tenacity = "^9.1.2"
 transformers = "^4.51.3"
 albumentations = "^2.0.6"
+matplotlib = "^3.10.1"
+scipy = "^1.15.2"
+opencv-python = "^4.11.0.86"
 
 
 [tool.poetry.group.dev.dependencies]

@@ -14,6 +14,7 @@ from albumentations.pytorch import ToTensorV2
 from datasets import load_dataset
 from torch import nn
 
+
 import transformers
 from transformers import (
     AutoConfig,
@@ -39,6 +40,14 @@ logger = logging.getLogger(__name__)
 
 def main(args: ExtendedArgumentParser):
     model_args, data_args, training_args = args[0], args[1], args[2]
+
+    if isinstance(training_args.learning_rate, str):
+        try:
+            training_args.learning_rate = float(training_args.learning_rate)
+        except ValueError:
+            raise ValueError(
+                f"Learning rate: {training_args.learning_rate} is not a float. Please provide a float"
+            )
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
@@ -120,7 +129,6 @@ def main(args: ExtendedArgumentParser):
             data_files=data_files,
             cache_dir=model_args.cache_dir,
         )
-
     # Rename column names to standardized names (only "image" and "label" need to be present)
     if "pixel_values" in dataset["train"].column_names:
         dataset = dataset.rename_columns({"pixel_values": "image"})
@@ -217,43 +225,47 @@ def main(args: ExtendedArgumentParser):
         )
     else:
         height, width = image_processor.size["height"], image_processor.size["width"]
-    train_transforms = A.Compose(
-        [
-            A.Lambda(
-                name="reduce_labels",
-                mask=reduce_labels_transform if data_args.do_reduce_labels else None,
-                p=1.0,
-            ),
-            # Pad image with 255, because it is ignored by loss
-            A.PadIfNeeded(
-                min_height=height, min_width=width, border_mode=0, value=255, p=1.0
-            ),
-            A.Normalize(
-                mean=image_processor.image_mean,
-                std=image_processor.image_std,
-                max_pixel_value=255.0,
-                p=1.0,
-            ),
-            ToTensorV2(),
-        ]
-    )
-    val_transforms = A.Compose(
-        [
-            A.Lambda(
-                name="reduce_labels",
-                mask=reduce_labels_transform if data_args.do_reduce_labels else None,
-                p=1.0,
-            ),
-            A.Resize(height=height, width=width, p=1.0),
-            A.Normalize(
-                mean=image_processor.image_mean,
-                std=image_processor.image_std,
-                max_pixel_value=255.0,
-                p=1.0,
-            ),
-            ToTensorV2(),
-        ]
-    )
+        train_transforms = A.Compose(
+            [
+                A.Lambda(
+                    name="reduce_labels",
+                    mask=reduce_labels_transform
+                    if data_args.do_reduce_labels
+                    else None,
+                    p=1.0,
+                ),
+                A.PadIfNeeded(
+                    min_height=height, min_width=width, border_mode=0, fill=255, p=1.0
+                ),
+                A.Resize(height=height, width=width, p=1.0),
+                A.Normalize(
+                    mean=image_processor.image_mean,
+                    std=image_processor.image_std,
+                    max_pixel_value=255.0,
+                    p=1.0,
+                ),
+                ToTensorV2(),
+            ]
+        )
+        val_transforms = A.Compose(
+            [
+                A.Lambda(
+                    name="reduce_labels",
+                    mask=reduce_labels_transform
+                    if data_args.do_reduce_labels
+                    else None,
+                    p=1.0,
+                ),
+                A.Resize(height=height, width=width, p=1.0),
+                A.Normalize(
+                    mean=image_processor.image_mean,
+                    std=image_processor.image_std,
+                    max_pixel_value=255.0,
+                    p=1.0,
+                ),
+                ToTensorV2(),
+            ]
+        )
 
     def preprocess_batch(example_batch, transforms: A.Compose):
         pixel_values = []
@@ -291,12 +303,6 @@ def main(args: ExtendedArgumentParser):
     if training_args.do_eval:
         if "validation" not in dataset:
             raise ValueError("--do_eval requires a validation dataset")
-        if data_args.max_eval_samples is not None:
-            dataset["validation"] = (
-                dataset["validation"]
-                .shuffle(seed=training_args.seed)
-                .select(range(data_args.max_eval_samples))
-            )
         # Set the validation transforms
         dataset["validation"].set_transform(preprocess_val_batch_fn)
 
