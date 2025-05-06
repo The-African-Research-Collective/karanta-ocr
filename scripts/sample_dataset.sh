@@ -23,7 +23,7 @@ HUB_ID=$(grep '^hub_id:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
 PRIVATE=$(grep '^private:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
 
 # Run the Python script with the extracted arguments
-python karanta/data/sample_existing_dataset.py \
+python -m karanta.data.sample_existing_dataset \
   --dataset_name "$DATASET_NAME" \
   --split "$SPLIT" \
   --columns_to_keep "$COLUMNS_TO_KEEP" \
