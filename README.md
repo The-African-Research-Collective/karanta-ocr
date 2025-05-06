@@ -6,11 +6,13 @@
 </div>
 
 # Karanta OCR
+
 Karanta means "read" in Hausa, a language spoken in Nigeria and other West African countries. This project is a OCR toolkit for processing scanned documents containing content in african languages and extracting the text in them at scale.
 
 ## OCR Pipeline
 
 ### Document Type Classification
+
 The classifier identifies documents that require segmentation as segment and those that do not as no_segment. The model is available on the HuggingFace library and can be accessed as described below:
 
 ```python
@@ -26,6 +28,7 @@ print(result)
 ```
 
 #### Example Output:
+
 The `result` will be a list of dictionaries, where each dictionary contains:
 
 The predicted label (`segment` or `no_segment`).
