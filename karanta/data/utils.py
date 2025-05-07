@@ -1,11 +1,12 @@
 import os
 import json
 import logging
-from functools import wraps
 import time
 
 from typing import List, Optional, Union
 from pathlib import Path
+from functools import wraps
+
 
 from pdf2image import convert_from_path
 from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
