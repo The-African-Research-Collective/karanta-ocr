@@ -2,7 +2,7 @@ import re
 import ftfy  # package used to fix text encoding issues
 import random
 from dataclasses import dataclass
-from typing import List
+from typing import List, Literal
 
 from pypdf import PdfReader
 from pypdf.generic import RectangleObject
@@ -333,15 +333,22 @@ def _linearize_pdf_report(report: PageReport, max_length: int = 4000) -> str:
     return result
 
 
+def get_anchor_text(
+    local_pdf_path: str,
+    page: int,
+    pdf_engine: Literal["pdfreport"],
+    target_length: int = 4000,
+) -> str:
+    if pdf_engine == "pdfreport":
+        return _linearize_pdf_report(
+            _pdf_report(local_pdf_path, page), max_length=target_length
+        )
+    else:
+        raise ValueError(f"Unsupported PDF engine: {pdf_engine}")
+
+
 if __name__ == "__main__":
-    # local_pdf_path = "/Users/odunayoogundepo/Downloads/newspaper_images/_1582835014aBukKs.pdff_page_98.pdf"
-    local_pdf_path = (
-        "/Users/odunayoogundepo/Downloads/newspaper_images/Agbeyewo.pdf_page_0.pdf"
-    )
-    page_num = 1
-    report = _pdf_report(local_pdf_path, page_num)
+    local_pdf_path = "/Users/odunayoogundepo/Downloads/Agbeyewo.pdf"
+    page_num = 2
 
-    # print(report)
-
-    print(_linearize_pdf_report(report, max_length=4000))
-    # _linearize_pdf_report(report, max_length=4000)
+    print(get_anchor_text(local_pdf_path, page_num, pdf_engine="pdfreport"))
