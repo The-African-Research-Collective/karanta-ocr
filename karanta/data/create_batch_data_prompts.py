@@ -1,4 +1,3 @@
-import os
 import yaml
 
 from jinja2 import Template
@@ -71,40 +70,40 @@ def build_page_query(local_pdf_path: str, pretty_pdf_path: str, page: int) -> di
             prompt_template_dict["system"] = Template(prompt_template_dict["system"])
 
     # DEBUG crappy temporary code here that does the actual api call live so I can debug it a bit
-    from openai import OpenAI
+    # from openai import OpenAI
 
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    # client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    print(
-        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}"
-    )
+    # print(
+    #     f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}"
+    # )
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini-2025-04-14",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_template_dict["system"].render(
-                            {"base_text": anchor_text}
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-                    },
-                ],
-            }
-        ],
-        temperature=0.1,
-        max_tokens=3000,
-        logprobs=True,
-        top_logprobs=5,
-        response_format=openai_response_format_schema(),
-    )
-    print(response)
+    # response = client.chat.completions.create(
+    #     model="gpt-4.1-mini-2025-04-14",
+    #     messages=[
+    #         {
+    #             "role": "user",
+    #             "content": [
+    #                 {
+    #                     "type": "text",
+    #                     "text": prompt_template_dict["system"].render(
+    #                         {"base_text": anchor_text}
+    #                     ),
+    #                 },
+    #                 {
+    #                     "type": "image_url",
+    #                     "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+    #                 },
+    #             ],
+    #         }
+    #     ],
+    #     temperature=0.1,
+    #     max_tokens=3000,
+    #     logprobs=True,
+    #     top_logprobs=5,
+    #     response_format=openai_response_format_schema(),
+    # )
+    # print(response)
 
     # Construct OpenAI Batch API request format#
     # There are a few tricks to know when doing data processing with OpenAI's apis
@@ -114,28 +113,38 @@ def build_page_query(local_pdf_path: str, pretty_pdf_path: str, page: int) -> di
     # Also, structured outputs let you cheat, because the order in which fields are in your schema, is the order in which the model will answer them, so you can have it answer some "preperatory" or "chain of thought" style questions first before going into the meat of your response, which is going to give better answers
     # Check your prompt for typos, it makes a performance difference!
     # Ask for logprobs, it's not any more expensive and you can use them later to help identify problematic responses
-    # return {
-    #     "custom_id": f"{pretty_pdf_path}-{page}",
-    #     "method": "POST",
-    #     "url": "/v1/chat/completions",
-    #     "body": {
-    #         "model": "gpt-4o-2024-08-06",
-    #         "messages": [
-    #             {
-    #                 "role": "user",
-    #                 "content": [
-    #                     {"type": "text", "text": prompt_template_dict["system"].render({"base_text": anchor_text})},
-    #                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
-    #                 ],
-    #             }
-    #         ],
-    #         "temperature": 0.1,
-    #         "max_tokens": 6000,
-    #         "logprobs": True,
-    #         "top_logprobs": 5,
-    #         "response_format": openai_response_format_schema(),
-    #     },
-    # }
+    return {
+        "custom_id": f"{pretty_pdf_path}-{page}",
+        "method": "POST",
+        "url": "/v1/chat/completions",
+        "body": {
+            "model": "gpt-4o-2024-08-06",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt_template_dict["system"].render(
+                                {"base_text": anchor_text}
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 6000,
+            "logprobs": True,
+            "top_logprobs": 5,
+            "response_format": openai_response_format_schema(),
+        },
+    }
 
 
 if __name__ == "__main__":
