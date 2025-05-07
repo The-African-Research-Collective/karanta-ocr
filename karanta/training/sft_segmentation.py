@@ -328,6 +328,12 @@ def main(args: ExtendedArgumentParser):
     dataset = load_dataset(
         data_args.dataset_name, trust_remote_code=model_args.trust_remote_code
     )
+
+    if "pixel_values" in dataset["train"].column_names:
+        dataset = dataset.rename_columns({"pixel_values": "image"})
+    if "annotations" in dataset["train"].column_names:
+        dataset = dataset.rename_columns({"annotations": "label"})
+
     if "validation" not in dataset:
         dataset["validation"] = dataset["train"].train_test_split(test_size=0.15)
 
