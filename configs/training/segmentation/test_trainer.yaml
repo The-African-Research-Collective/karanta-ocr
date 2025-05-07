@@ -11,7 +11,7 @@ trust_remote_code: false
 # =============================================================================
 # ========================= Data Arguments ===================================
 # =============================================================================
-dataset_name: "segments/sidewalk-semantic"  # Dataset type
+dataset_name: Dugerij/segmentation_example  # Dataset type
 train_dir: null
 validation_dir: null
 dataset_mixer: null  
@@ -32,4 +32,4 @@ learning_rate: 5e-5
 num_train_epochs: 10
 seed: 42  
 push_to_hub: true 
-hub_model_id: taresco/newspaper_segformer
+hub_model_id: taresco/newspaper_segmentation_example
