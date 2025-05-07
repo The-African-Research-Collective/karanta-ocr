@@ -11,7 +11,7 @@ trust_remote_code: false
 # =============================================================================
 # ========================= Data Arguments ===================================
 # =============================================================================
-dataset_name: Dugerij/segmentation_example  # Dataset type
+dataset_name: Dugerij/segmentation_example_coco # Dataset type
 train_dir: null
 validation_dir: null
 dataset_mixer: null  

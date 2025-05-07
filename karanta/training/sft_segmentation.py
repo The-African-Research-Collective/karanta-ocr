@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 def augment_and_transform_batch(
     examples: Mapping[str, Any],
     transform: A.Compose,
-    image_processor: AutoImageProcessor,
+    image_processor: Any,  # Updated processor
 ) -> BatchFeature:
     batch = {
         "pixel_values": [],
@@ -50,37 +50,26 @@ def augment_and_transform_batch(
         "class_labels": [],
     }
 
-    for pil_image, pil_annotation in zip(examples["image"], examples["label"]):
+    for idx, (pil_image, annotation_dict) in enumerate(
+        zip(examples["image"], examples["label"])
+    ):
         image = np.array(pil_image)
-        semantic_and_instance_masks = np.array(pil_annotation)[..., :2]
 
-        # Apply augmentations
-        output = transform(image=image, mask=semantic_and_instance_masks)
-
+        # Apply augmentations to the image only. If you want to augment masks too, you'd need to recreate them from segments_info.
+        output = transform(image=image)
         aug_image = output["image"]
-        aug_semantic_and_instance_masks = output["mask"]
-        aug_instance_mask = aug_semantic_and_instance_masks[..., 1]
 
-        # Create mapping from instance id to semantic id
-        unique_semantic_id_instance_id_pairs = np.unique(
-            aug_semantic_and_instance_masks.reshape(-1, 2), axis=0
-        )
-        instance_id_to_semantic_id = {
-            instance_id: semantic_id
-            for semantic_id, instance_id in unique_semantic_id_instance_id_pairs
-        }
-
-        # Apply the image processor transformations: resizing, rescaling, normalization
+        # Preprocess with the processor using the annotation as-is
         model_inputs = image_processor(
-            images=[aug_image],
-            segmentation_maps=[aug_instance_mask],
-            instance_id_to_semantic_id=instance_id_to_semantic_id,
+            images=aug_image,
+            annotations=annotation_dict,
+            return_segmentation_masks=True,
             return_tensors="pt",
         )
 
-        batch["pixel_values"].append(model_inputs.pixel_values[0])
-        batch["mask_labels"].append(model_inputs.mask_labels[0])
-        batch["class_labels"].append(model_inputs.class_labels[0])
+        batch["pixel_values"].append(model_inputs["pixel_values"][0])
+        batch["mask_labels"].append(model_inputs["mask_labels"][0])
+        batch["class_labels"].append(model_inputs["class_labels"][0])
 
     return batch
 
@@ -386,6 +375,7 @@ def main(args: ExtendedArgumentParser):
             A.RandomBrightnessContrast(p=0.5),
             A.HueSaturationValue(p=0.1),
         ],
+        is_check_shapes=False,
     )
     validation_transform = A.Compose(
         [A.NoOp()],
