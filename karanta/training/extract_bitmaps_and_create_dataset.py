@@ -58,7 +58,12 @@ def find_annotations_by_image_id(annotations_data, image_id):
 
 
 def create_segmentation_bitmap(
-    image_path, annotations_data, image_name, output_path=None, class_colors=None
+    image_path,
+    annotations_data,
+    image_name,
+    output_path=None,
+    class_colors=None,
+    grayscale=False,
 ):
     """Create a visualization segmentation bitmap for an image based on its annotations."""
     logger.debug(f"Creating segmentation bitmap for {image_name}")
@@ -138,10 +143,13 @@ def create_segmentation_bitmap(
 
     # Save if path provided
     if output_path:
-        cv2.imwrite(output_path, visualization)
-        logger.debug(f"Saved segmentation bitmap to {output_path}")
+        if grayscale:
+            cv2.imwrite(output_path, segmentation)
+        else:
+            cv2.imwrite(output_path, visualization)
+        logger.debug(f"Saved segmentation png file to {output_path}")
 
-    return visualization, class_colors
+    return (segmentation if grayscale else visualization), class_colors
 
 
 def process_single_image(
@@ -153,9 +161,14 @@ def process_single_image(
         base_name = os.path.splitext(os.path.basename(image_file))[0]
         output_path = os.path.join(output_dir, f"{base_name}.png")
 
-        # Create segmentation bitmap
+        # Create segmentation png file
         _, updated_class_colors = create_segmentation_bitmap(
-            image_path, annotations_data, base_name, output_path, class_colors.copy()
+            image_path,
+            annotations_data,
+            base_name,
+            output_path,
+            class_colors.copy(),
+            grayscale=True,
         )
 
         logger.info(f"Processed {image_file}")

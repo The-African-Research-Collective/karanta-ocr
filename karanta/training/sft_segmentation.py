@@ -1,29 +1,30 @@
 #!/usr/bin/env python
-# modified from https://github.com/huggingface/transformers/blob/main/examples/pytorch/semantic-segmentation/run_semantic_segmentation.py
+# modified from https://github.com/huggingface/transformers/blob/main/examples/pytorch/instance-segmentation/run_instance_segmentation.py
+
+"""Finetuning 🤗 Transformers model for instance segmentation leveraging the Trainer API."""
 
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from functools import partial
+from typing import Any, Optional
 
 import albumentations as A
-import evaluate
 import numpy as np
 import torch
-from albumentations.pytorch import ToTensorV2
 from datasets import load_dataset
-from torch import nn
-
+from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
 import transformers
 from transformers import (
-    AutoConfig,
     AutoImageProcessor,
-    AutoModelForSemanticSegmentation,
+    AutoModelForUniversalSegmentation,
     Trainer,
-    default_data_collator,
-    set_seed,
+    TrainingArguments,
 )
+from transformers.image_processing_utils import BatchFeature
+from transformers.trainer import EvalPrediction
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import send_example_telemetry
 
@@ -31,29 +32,235 @@ from karanta.training.segmentation_args import (
     DataTrainingArguments,
     ModelArguments,
     ExperimentArguments,
+    ModelOutput,
 )
-from karanta.data.utils import prepare_mixed_datasets
-from karanta.training.utils import ExtendedArgumentParser, reduce_labels_transform
+from karanta.training.utils import ExtendedArgumentParser
 
 logger = logging.getLogger(__name__)
 
 
-def main(args: ExtendedArgumentParser):
-    model_args, data_args, training_args = args[0], args[1], args[2]
+def augment_and_transform_batch(
+    examples: Mapping[str, Any],
+    transform: A.Compose,
+    image_processor: AutoImageProcessor,
+) -> BatchFeature:
+    batch = {
+        "pixel_values": [],
+        "mask_labels": [],
+        "class_labels": [],
+    }
 
-    if isinstance(training_args.learning_rate, str):
-        try:
-            training_args.learning_rate = float(training_args.learning_rate)
-        except ValueError:
-            raise ValueError(
-                f"Learning rate: {training_args.learning_rate} is not a float. Please provide a float"
+    for pil_image, pil_annotation in zip(examples["image"], examples["label"]):
+        image = np.array(pil_image)
+        semantic_and_instance_masks = np.array(pil_annotation)[..., :2]
+
+        # Apply augmentations
+        output = transform(image=image, mask=semantic_and_instance_masks)
+
+        aug_image = output["image"]
+        aug_semantic_and_instance_masks = output["mask"]
+        aug_instance_mask = aug_semantic_and_instance_masks[..., 1]
+
+        # Create mapping from instance id to semantic id
+        unique_semantic_id_instance_id_pairs = np.unique(
+            aug_semantic_and_instance_masks.reshape(-1, 2), axis=0
+        )
+        instance_id_to_semantic_id = {
+            instance_id: semantic_id
+            for semantic_id, instance_id in unique_semantic_id_instance_id_pairs
+        }
+
+        # Apply the image processor transformations: resizing, rescaling, normalization
+        model_inputs = image_processor(
+            images=[aug_image],
+            segmentation_maps=[aug_instance_mask],
+            instance_id_to_semantic_id=instance_id_to_semantic_id,
+            return_tensors="pt",
+        )
+
+        batch["pixel_values"].append(model_inputs.pixel_values[0])
+        batch["mask_labels"].append(model_inputs.mask_labels[0])
+        batch["class_labels"].append(model_inputs.class_labels[0])
+
+    return batch
+
+
+def collate_fn(examples):
+    batch = {}
+    batch["pixel_values"] = torch.stack(
+        [example["pixel_values"] for example in examples]
+    )
+    batch["class_labels"] = [example["class_labels"] for example in examples]
+    batch["mask_labels"] = [example["mask_labels"] for example in examples]
+    if "pixel_mask" in examples[0]:
+        batch["pixel_mask"] = torch.stack(
+            [example["pixel_mask"] for example in examples]
+        )
+    return batch
+
+
+def nested_cpu(tensors):
+    if isinstance(tensors, (list, tuple)):
+        return type(tensors)(nested_cpu(t) for t in tensors)
+    elif isinstance(tensors, Mapping):
+        return type(tensors)({k: nested_cpu(t) for k, t in tensors.items()})
+    elif isinstance(tensors, torch.Tensor):
+        return tensors.cpu().detach()
+    else:
+        return tensors
+
+
+class Evaluator:
+    """
+    Compute metrics for the instance segmentation task.
+    """
+
+    def __init__(
+        self,
+        image_processor: AutoImageProcessor,
+        id2label: Mapping[int, str],
+        threshold: float = 0.0,
+    ):
+        """
+        Initialize evaluator with image processor, id2label mapping and threshold for filtering predictions.
+
+        Args:
+            image_processor (AutoImageProcessor): Image processor for
+                `post_process_instance_segmentation` method.
+            id2label (Mapping[int, str]): Mapping from class id to class name.
+            threshold (float): Threshold to filter predicted boxes by confidence. Defaults to 0.0.
+        """
+        self.image_processor = image_processor
+        self.id2label = id2label
+        self.threshold = threshold
+        self.metric = self.get_metric()
+
+    def get_metric(self):
+        metric = MeanAveragePrecision(iou_type="segm", class_metrics=True)
+        return metric
+
+    def reset_metric(self):
+        self.metric.reset()
+
+    def postprocess_target_batch(self, target_batch) -> list[dict[str, torch.Tensor]]:
+        """Collect targets in a form of list of dictionaries with keys "masks", "labels"."""
+        batch_masks = target_batch[0]
+        batch_labels = target_batch[1]
+        post_processed_targets = []
+        for masks, labels in zip(batch_masks, batch_labels):
+            post_processed_targets.append(
+                {
+                    "masks": masks.to(dtype=torch.bool),
+                    "labels": labels,
+                }
             )
+        return post_processed_targets
 
-    # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
-    # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_semantic_segmentation", model_args, data_args)
+    def get_target_sizes(self, post_processed_targets) -> list[list[int]]:
+        target_sizes = []
+        for target in post_processed_targets:
+            target_sizes.append(target["masks"].shape[-2:])
+        return target_sizes
 
-    # Setup logging
+    def postprocess_prediction_batch(
+        self, prediction_batch, target_sizes
+    ) -> list[dict[str, torch.Tensor]]:
+        """Collect predictions in a form of list of dictionaries with keys "masks", "labels", "scores"."""
+
+        model_output = ModelOutput(
+            class_queries_logits=prediction_batch[0],
+            masks_queries_logits=prediction_batch[1],
+        )
+        post_processed_output = self.image_processor.post_process_instance_segmentation(
+            model_output,
+            threshold=self.threshold,
+            target_sizes=target_sizes,
+            return_binary_maps=True,
+        )
+
+        post_processed_predictions = []
+        for image_predictions, target_size in zip(post_processed_output, target_sizes):
+            if image_predictions["segments_info"]:
+                post_processed_image_prediction = {
+                    "masks": image_predictions["segmentation"].to(dtype=torch.bool),
+                    "labels": torch.tensor(
+                        [x["label_id"] for x in image_predictions["segments_info"]]
+                    ),
+                    "scores": torch.tensor(
+                        [x["score"] for x in image_predictions["segments_info"]]
+                    ),
+                }
+            else:
+                # for void predictions, we need to provide empty tensors
+                post_processed_image_prediction = {
+                    "masks": torch.zeros([0, *target_size], dtype=torch.bool),
+                    "labels": torch.tensor([]),
+                    "scores": torch.tensor([]),
+                }
+            post_processed_predictions.append(post_processed_image_prediction)
+
+        return post_processed_predictions
+
+    @torch.no_grad()
+    def __call__(
+        self, evaluation_results: EvalPrediction, compute_result: bool = False
+    ) -> Mapping[str, float]:
+        """
+        Update metrics with current evaluation results and return metrics if `compute_result` is True.
+
+        Args:
+            evaluation_results (EvalPrediction): Predictions and targets from evaluation.
+            compute_result (bool): Whether to compute and return metrics.
+
+        Returns:
+            Mapping[str, float]: Metrics in a form of dictionary {<metric_name>: <metric_value>}
+        """
+        prediction_batch = nested_cpu(evaluation_results.predictions)
+        target_batch = nested_cpu(evaluation_results.label_ids)
+
+        # For metric computation we need to provide:
+        #  - targets in a form of list of dictionaries with keys "masks", "labels"
+        #  - predictions in a form of list of dictionaries with keys "masks", "labels", "scores"
+        post_processed_targets = self.postprocess_target_batch(target_batch)
+        target_sizes = self.get_target_sizes(post_processed_targets)
+        post_processed_predictions = self.postprocess_prediction_batch(
+            prediction_batch, target_sizes
+        )
+
+        # Compute metrics
+        self.metric.update(post_processed_predictions, post_processed_targets)
+
+        if not compute_result:
+            return
+
+        metrics = self.metric.compute()
+
+        # Replace list of per class metrics with separate metric for each class
+        classes = metrics.pop("classes")
+        map_per_class = metrics.pop("map_per_class")
+        mar_100_per_class = metrics.pop("mar_100_per_class")
+        for class_id, class_map, class_mar in zip(
+            classes, map_per_class, mar_100_per_class
+        ):
+            class_name = (
+                self.id2label[class_id.item()]
+                if self.id2label is not None
+                else class_id.item()
+            )
+            metrics[f"map_{class_name}"] = class_map
+            metrics[f"mar_100_{class_name}"] = class_mar
+
+        metrics = {k: round(v.item(), 4) for k, v in metrics.items()}
+
+        # Reset metric for next evaluation
+        self.reset_metric()
+
+        return metrics
+
+
+def setup_logging(training_args: TrainingArguments) -> None:
+    """Setup logging according to `training_args`."""
+
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
@@ -70,277 +277,175 @@ def main(args: ExtendedArgumentParser):
     transformers.utils.logging.enable_default_handler()
     transformers.utils.logging.enable_explicit_format()
 
-    # Log on each process the small summary:
+
+def find_last_checkpoint(training_args: TrainingArguments) -> Optional[str]:
+    """Find the last checkpoint in the output directory according to parameters specified in `training_args`."""
+
+    checkpoint = None
+    if training_args.resume_from_checkpoint is not None:
+        checkpoint = training_args.resume_from_checkpoint
+    elif (
+        os.path.isdir(training_args.output_dir)
+        and not training_args.overwrite_output_dir
+    ):
+        checkpoint = get_last_checkpoint(training_args.output_dir)
+        if checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+    return checkpoint
+
+
+def main(args: ExtendedArgumentParser):
+    model_args, data_args, training_args = args[0], args[1], args[2]
+
+    if isinstance(training_args.learning_rate, str):
+        try:
+            training_args.learning_rate = float(training_args.learning_rate)
+        except ValueError:
+            raise ValueError(
+                f"Learning rate: {training_args.learning_rate} is not a float. Please provide a float"
+            )
+    training_args.eval_do_concat_batches = False
+    training_args.batch_eval_metrics = True
+    training_args.remove_unused_columns = False
+
+    # # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
+    # # information sent is the one passed as arguments along with your Python/PyTorch versions.
+    send_example_telemetry("run_instance_segmentation", model_args, data_args)
+
+    # Setup logging and log on each process the small summary:
+    setup_logging(training_args)
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}, "
         + f"distributed training: {training_args.parallel_mode.value == 'distributed'}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
-    # Detecting last checkpoint.
-    last_checkpoint = None
-    if (
-        os.path.isdir(training_args.output_dir)
-        and training_args.do_train
-        and not training_args.overwrite_output_dir
-    ):
-        last_checkpoint = get_last_checkpoint(training_args.output_dir)
-        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
-            raise ValueError(
-                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
-            )
-        elif (
-            last_checkpoint is not None and training_args.resume_from_checkpoint is None
-        ):
-            logger.info(
-                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
-                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
-            )
+    # Load last checkpoint from output_dir if it exists (and we are not overwriting it)
+    checkpoint = find_last_checkpoint(training_args)
 
-    # Set seed before initializing model.
-    set_seed(training_args.seed)
+    # ------------------------------------------------------------------------------------------------
+    # Load dataset, prepare splits
+    # ------------------------------------------------------------------------------------------------
 
-    # Initialize our dataset and prepare it for the 'image-classification' task.
-    if data_args.dataset_mixer or data_args.dataset_mixer_list:
-        dataset = prepare_mixed_datasets(
-            dataset_sources=data_args.dataset_mixer or data_args.dataset_mixer_list,
-            splits=["train", "validation"],
-            save_dir=data_args.output_dir,
-            shuffle_data=True,
-            ensure_columns=[data_args.image_column_name, data_args.label_column_name],
-            include_source_column=True,
-        )
-    elif data_args.dataset_name:
-        dataset = load_dataset(
-            data_args.dataset_name,
-            cache_dir=model_args.cache_dir,
-            token=model_args.token,
-            trust_remote_code=model_args.trust_remote_code,
-        )
-    else:
-        data_files = {}
-        if data_args.train_dir:
-            data_files["train"] = os.path.join(data_args.train_dir, "**")
-        if data_args.validation_dir:
-            data_files["validation"] = os.path.join(data_args.validation_dir, "**")
-        dataset = load_dataset(
-            "imagefolder",
-            data_files=data_files,
-            cache_dir=model_args.cache_dir,
-        )
-    # Rename column names to standardized names (only "image" and "label" need to be present)
-    if "pixel_values" in dataset["train"].column_names:
-        dataset = dataset.rename_columns({"pixel_values": "image"})
-    if "annotation" in dataset["train"].column_names:
-        dataset = dataset.rename_columns({"annotation": "label"})
-
-    # If we don't have a validation split, split off a percentage of train as validation.
-    data_args.train_val_split = (
-        None if "validation" in dataset.keys() else data_args.train_val_split
+    dataset = load_dataset(
+        data_args.dataset_name, trust_remote_code=model_args.trust_remote_code
     )
-    if isinstance(data_args.train_val_split, float) and data_args.train_val_split > 0.0:
-        split = dataset["train"].train_test_split(data_args.train_val_split)
-        dataset["train"] = split["train"]
-        dataset["validation"] = split["test"]
+    if "validation" not in dataset:
+        dataset["validation"] = dataset["train"].train_test_split(test_size=0.15)
 
-    # Prepare label mappings.
-    id2label = {
-        0: "whitespace",
-        1: "articles",
-    }
-    label2id = {v: k for k, v in id2label.items()}
+    # We need to specify the label2id mapping for the model
+    # it is a mapping from semantic class name to class index.
+    # In case your dataset does not provide it, you can create it manually:
+    label2id = {"whitespace": 0, "article": 1}
 
-    # Load the mean IoU metric from the evaluate package
-    metric = evaluate.load("mean_iou", cache_dir=model_args.cache_dir)
+    if data_args.do_reduce_labels:
+        label2id = {
+            name: idx for name, idx in label2id.items() if idx != 0
+        }  # remove background class
+        label2id = {
+            name: idx - 1 for name, idx in label2id.items()
+        }  # shift class indices by -1
 
-    # Define our compute_metrics function. It takes an `EvalPrediction` object (a namedtuple with a
-    # predictions and label_ids field) and has to return a dictionary string to float.
-    @torch.no_grad()
-    def compute_metrics(eval_pred):
-        logits, labels = eval_pred
-        logits_tensor = torch.from_numpy(logits)
-        # scale the logits to the size of the label
-        logits_tensor = nn.functional.interpolate(
-            logits_tensor,
-            size=labels.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        ).argmax(dim=1)
+    id2label = {v: k for k, v in label2id.items()}
 
-        pred_labels = logits_tensor.detach().cpu().numpy()
-        metrics = metric.compute(
-            predictions=pred_labels,
-            references=labels,
-            num_labels=len(id2label),
-            ignore_index=0,
-            reduce_labels=image_processor.do_reduce_labels,
-        )
-        # add per category metrics as individual key-value pairs
-        per_category_accuracy = metrics.pop("per_category_accuracy").tolist()
-        per_category_iou = metrics.pop("per_category_iou").tolist()
-
-        metrics.update(
-            {f"accuracy_{id2label[i]}": v for i, v in enumerate(per_category_accuracy)}
-        )
-        metrics.update(
-            {f"iou_{id2label[i]}": v for i, v in enumerate(per_category_iou)}
-        )
-
-        return metrics
-
-    config = AutoConfig.from_pretrained(
-        model_args.config_name or model_args.model_name_or_path,
+    # ------------------------------------------------------------------------------------------------
+    # Load pretrained config, model and image processor
+    # ------------------------------------------------------------------------------------------------
+    model = AutoModelForUniversalSegmentation.from_pretrained(
+        model_args.model_name_or_path,
         label2id=label2id,
         id2label=id2label,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
+        ignore_mismatched_sizes=True,
         token=model_args.token,
-        trust_remote_code=model_args.trust_remote_code,
     )
-    model = AutoModelForSemanticSegmentation.from_pretrained(
-        model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
-        config=config,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
-        token=model_args.token,
-        trust_remote_code=model_args.trust_remote_code,
-    )
+
     image_processor = AutoImageProcessor.from_pretrained(
-        model_args.image_processor_name or model_args.model_name_or_path,
+        model_args.model_name_or_path,
+        do_resize=True,
+        size={"height": model_args.image_height, "width": model_args.image_width},
         do_reduce_labels=data_args.do_reduce_labels,
-        cache_dir=model_args.cache_dir,
-        revision=model_args.model_revision,
+        reduce_labels=data_args.do_reduce_labels,
         token=model_args.token,
-        trust_remote_code=model_args.trust_remote_code,
     )
 
-    # Define transforms to be applied to each image and target.
-    if "shortest_edge" in image_processor.size:
-        # We instead set the target size as (shortest_edge, shortest_edge) to here to ensure all images are batchable.
-        height, width = (
-            image_processor.size["shortest_edge"],
-            image_processor.size["shortest_edge"],
-        )
-    else:
-        height, width = image_processor.size["height"], image_processor.size["width"]
-        train_transforms = A.Compose(
-            [
-                A.Lambda(
-                    name="reduce_labels",
-                    mask=reduce_labels_transform
-                    if data_args.do_reduce_labels
-                    else None,
-                    p=1.0,
-                ),
-                A.PadIfNeeded(
-                    min_height=height, min_width=width, border_mode=0, fill=255, p=1.0
-                ),
-                A.Resize(height=height, width=width, p=1.0),
-                A.Normalize(
-                    mean=image_processor.image_mean,
-                    std=image_processor.image_std,
-                    max_pixel_value=255.0,
-                    p=1.0,
-                ),
-                ToTensorV2(),
-            ]
-        )
-        val_transforms = A.Compose(
-            [
-                A.Lambda(
-                    name="reduce_labels",
-                    mask=reduce_labels_transform
-                    if data_args.do_reduce_labels
-                    else None,
-                    p=1.0,
-                ),
-                A.Resize(height=height, width=width, p=1.0),
-                A.Normalize(
-                    mean=image_processor.image_mean,
-                    std=image_processor.image_std,
-                    max_pixel_value=255.0,
-                    p=1.0,
-                ),
-                ToTensorV2(),
-            ]
-        )
+    # ------------------------------------------------------------------------------------------------
+    # Define image augmentations and dataset transforms
+    # ------------------------------------------------------------------------------------------------
+    train_augment_and_transform = A.Compose(
+        [
+            A.HorizontalFlip(p=0.5),
+            A.RandomBrightnessContrast(p=0.5),
+            A.HueSaturationValue(p=0.1),
+        ],
+    )
+    validation_transform = A.Compose(
+        [A.NoOp()],
+    )
 
-    def preprocess_batch(example_batch, transforms: A.Compose):
-        pixel_values = []
-        labels = []
-        for image, target in zip(example_batch["image"], example_batch["label"]):
-            transformed = transforms(
-                image=np.array(image.convert("RGB")), mask=np.array(target)
-            )
-            pixel_values.append(transformed["image"])
-            labels.append(transformed["mask"])
+    # Make transform functions for batch and apply for dataset splits
+    train_transform_batch = partial(
+        augment_and_transform_batch,
+        transform=train_augment_and_transform,
+        image_processor=image_processor,
+    )
+    validation_transform_batch = partial(
+        augment_and_transform_batch,
+        transform=validation_transform,
+        image_processor=image_processor,
+    )
+    dataset["train"] = dataset["train"].with_transform(train_transform_batch)
+    dataset["validation"] = dataset["validation"].with_transform(
+        validation_transform_batch
+    )
 
-        encoding = {}
-        encoding["pixel_values"] = torch.stack(pixel_values).to(torch.float)
-        encoding["labels"] = torch.stack(labels).to(torch.long)
+    # ------------------------------------------------------------------------------------------------
+    # Model training and evaluation with Trainer API
+    # ------------------------------------------------------------------------------------------------
 
-        return encoding
+    compute_metrics = Evaluator(
+        image_processor=image_processor, id2label=id2label, threshold=0.0
+    )
 
-    # Preprocess function for dataset should have only one argument,
-    # so we use partial to pass the transforms
-    preprocess_train_batch_fn = partial(preprocess_batch, transforms=train_transforms)
-    preprocess_val_batch_fn = partial(preprocess_batch, transforms=val_transforms)
-
-    if training_args.do_train:
-        if "train" not in dataset:
-            raise ValueError("--do_train requires a train dataset")
-        if data_args.max_train_samples is not None:
-            dataset["train"] = (
-                dataset["train"]
-                .shuffle(seed=training_args.seed)
-                .select(range(data_args.max_train_samples))
-            )
-        # Set the training transforms
-        dataset["train"].set_transform(preprocess_train_batch_fn)
-
-    if training_args.do_eval:
-        if "validation" not in dataset:
-            raise ValueError("--do_eval requires a validation dataset")
-        # Set the validation transforms
-        dataset["validation"].set_transform(preprocess_val_batch_fn)
-
-    # Initialize our trainer
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=dataset["train"] if training_args.do_train else None,
         eval_dataset=dataset["validation"] if training_args.do_eval else None,
-        compute_metrics=compute_metrics,
         processing_class=image_processor,
-        data_collator=default_data_collator,
+        data_collator=collate_fn,
+        compute_metrics=compute_metrics,
     )
 
     # Training
     if training_args.do_train:
-        checkpoint = None
-        if training_args.resume_from_checkpoint is not None:
-            checkpoint = training_args.resume_from_checkpoint
-        elif last_checkpoint is not None:
-            checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()
         trainer.log_metrics("train", train_result.metrics)
         trainer.save_metrics("train", train_result.metrics)
         trainer.save_state()
 
-    # Evaluation
+    # Final evaluation
     if training_args.do_eval:
-        metrics = trainer.evaluate()
-        trainer.log_metrics("eval", metrics)
-        trainer.save_metrics("eval", metrics)
+        metrics = trainer.evaluate(
+            eval_dataset=dataset["validation"], metric_key_prefix="test"
+        )
+        trainer.log_metrics("test", metrics)
+        trainer.save_metrics("test", metrics)
 
     # Write model card and (optionally) push to hub
     kwargs = {
         "finetuned_from": model_args.model_name_or_path,
         "dataset": data_args.dataset_name,
-        "tags": ["image-segmentation", "vision"],
+        "tags": ["image-segmentation", "instance-segmentation", "vision"],
     }
     if training_args.push_to_hub:
         trainer.push_to_hub(**kwargs)

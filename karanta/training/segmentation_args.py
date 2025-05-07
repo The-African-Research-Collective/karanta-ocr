@@ -1,6 +1,14 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
+import torch
+
+
+@dataclass
+class ModelOutput:
+    class_queries_logits: torch.Tensor
+    masks_queries_logits: torch.Tensor
+
 
 @dataclass
 class DataTrainingArguments:
@@ -103,7 +111,7 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        default="nvidia/mit-b0",
+        default="facebook/mask2former-swin-tiny-coco-instance",
         metadata={
             "help": "Path to pretrained model or model identifier from huggingface.co/models"
         },
@@ -128,6 +136,12 @@ class ModelArguments:
     )
     image_processor_name: str = field(
         default=None, metadata={"help": "Name or path of preprocessor config."}
+    )
+    image_height: Optional[int] = field(
+        default=512, metadata={"help": "Image height after resizing."}
+    )
+    image_width: Optional[int] = field(
+        default=512, metadata={"help": "Image width after resizing."}
     )
     token: str = field(
         default=None,

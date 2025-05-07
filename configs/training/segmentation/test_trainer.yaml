@@ -1,7 +1,7 @@
 # =============================================================================
 # ========================= Model Arguments ===================================
 # =============================================================================
-model_name_or_path: nvidia/mit-b0
+model_name_or_path: facebook/mask2former-swin-tiny-coco-instance
 config_name: null 
 image_processor_name: null 
 cache_dir: null
