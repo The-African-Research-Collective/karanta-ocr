@@ -1,14 +1,13 @@
-export VLLM_PORT=$1
-export VLLM_MODEL=$2
+# Triton==3.1.0 &&
 
+export VLLM_PORT=$1
+export VLLM_MODEL=$2 #
+export CUDA_VISIBLE_DEVICES=0
 
 # Set up Python virtual environment
 echo "Setting up Python virtual environment..."
 
-uv venv  || { echo "Failed to create Python virtual environment"; exit 1; }
-
 source .venv/bin/activate
-pip install vllm || { echo "Failed to install vllm"; exit 1; }
 
 # Configure and start the vLLM server
 echo "Starting vLLM server..."
@@ -26,8 +25,10 @@ fi
 # Start the server in a new tmux session
 tmux new -s vllm -d "python -m vllm.entrypoints.openai.api_server \
     --model $VLLM_MODEL \
-    --dtype auto \
+    --dtype bfloat16 \
     --gpu-memory-utilization 0.9 \
-    --port $VLLM_PORT"
+    --port $VLLM_PORT" \
+    --api-key "karanta-ocr" \
+    --task "generate"
 
 echo "vLLM server started successfully in tmux session 'vllm'."

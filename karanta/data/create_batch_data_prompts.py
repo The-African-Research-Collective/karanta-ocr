@@ -4,6 +4,7 @@ from jinja2 import Template
 
 from karanta.data.process_pdf_utils import render_pdf_to_base64png
 from karanta.prompts.anchor import get_anchor_text
+from karanta.data.utils import timeit
 
 TARGET_IMAGE_DIM = 2048
 PROMPT_PATH = "configs/prompts/open_ai_data_generation.yaml"
@@ -59,7 +60,10 @@ def openai_response_format_schema() -> dict:
     }
 
 
-def build_page_query(local_pdf_path: str, pretty_pdf_path: str, page: int) -> dict:
+@timeit
+def build_page_query_openai(
+    local_pdf_path: str, pretty_pdf_path: str, page: int
+) -> dict:
     image_base64 = render_pdf_to_base64png(local_pdf_path, page, TARGET_IMAGE_DIM)
     anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
 
@@ -147,8 +151,92 @@ def build_page_query(local_pdf_path: str, pretty_pdf_path: str, page: int) -> di
     }
 
 
-if __name__ == "__main__":
-    local_pdf_path = "/Users/odunayoogundepo/Downloads/Agbeyewo.pdf"
-    page_num = 2
+@timeit
+async def build_page_query_vllm_olmoocr(
+    local_pdf_path: str, pretty_pdf_path: str, page: int
+) -> dict:
+    """
+    Turns out that the OlmoOCR model is already pretty good on a lot of our content so the goal is to sort of
+    distill the output of the model into a separate model and use that to train a new model that is faster and smaller
+    """
+    image_base64 = render_pdf_to_base64png(local_pdf_path, page, TARGET_IMAGE_DIM)
+    anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
 
-    print(build_page_query(local_pdf_path, local_pdf_path, 1))
+    with open(PROMPT_PATH, "r") as stream:
+        prompt_template_dict = yaml.safe_load(stream)
+
+        if "system" in prompt_template_dict:
+            prompt_template_dict["system"] = Template(prompt_template_dict["system"])
+
+    # DEBUG crappy temporary code here that does the actual api call live so I can debug it a bit
+    # from openai import OpenAI
+
+    # client = AsyncOpenAI(base_url="http://localhost:8001/v1", api_key="token-abc123")
+
+    # print(
+    #     f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}"
+    # )
+
+    # response = await client.chat.completions.create(
+    #     model="allenai/olmOCR-7B-0225-preview",
+    #     messages=[
+    #         {
+    #             "role": "user",
+    #             "content": [
+    #                 {
+    #                     "type": "text",
+    #                     "text": prompt_template_dict["system"].render(
+    #                         {"base_text": anchor_text}
+    #                     ),
+    #                 },
+    #                 {
+    #                     "type": "image_url",
+    #                     "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+    #                 },
+    #             ],
+    #         }
+    #     ],
+    #     temperature=0.1,
+    #     max_tokens=3000,
+    #     logprobs=True,
+    #     top_logprobs=5,
+    #     response_format=openai_response_format_schema(),
+    # )
+
+    # print(response.choices[0].message.content)
+
+    # Construct A list of batch requests to send to the VLLM server
+    return {
+        "model": "allenai/olmOCR-7B-0225-preview",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt_template_dict["system"].render(
+                            {"base_text": anchor_text}
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                    },
+                ],
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 6000,
+        "logprobs": True,
+        "top_logprobs": 5,
+        "response_format": openai_response_format_schema(),
+    }
+
+
+if __name__ == "__main__":
+    local_pdf_path = "/Users/odunayoogundepo/Downloads/Canada Benefits 2025.pdf"
+    page_num = 3
+
+    import asyncio
+
+    asyncio.run(build_page_query_vllm_olmoocr(local_pdf_path, local_pdf_path, page_num))
