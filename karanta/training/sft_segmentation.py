@@ -11,7 +11,6 @@ from functools import partial
 from typing import Any, Optional
 
 import albumentations as A
-import numpy as np
 import torch
 from datasets import load_dataset
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
@@ -53,23 +52,27 @@ def augment_and_transform_batch(
     for idx, (pil_image, annotation_dict) in enumerate(
         zip(examples["image"], examples["label"])
     ):
-        image = np.array(pil_image)
-
-        # Apply augmentations to the image only. If you want to augment masks too, you'd need to recreate them from segments_info.
-        output = transform(image=image)
-        aug_image = output["image"]
+        # generate masks
+        target_with_masks = image_processor.prepare_annotation(
+            image=pil_image,
+            target=annotation_dict,
+        )
+        output = transform(
+            image=pil_image, annotation_with_masks=target_with_masks["masks"]
+        )
 
         # Preprocess with the processor using the annotation as-is
         model_inputs = image_processor(
-            images=aug_image,
-            annotations=annotation_dict,
-            return_segmentation_masks=True,
+            images=output["image"],
+            annotations=output["annotation_with_masks"],
             return_tensors="pt",
         )
 
         batch["pixel_values"].append(model_inputs["pixel_values"][0])
         batch["mask_labels"].append(model_inputs["mask_labels"][0])
         batch["class_labels"].append(model_inputs["class_labels"][0])
+
+        print(model_inputs.keys())
 
     return batch
 
@@ -367,6 +370,7 @@ def main(args: ExtendedArgumentParser):
         model_args.model_name_or_path,
         do_resize=True,
         size={"height": model_args.image_height, "width": model_args.image_width},
+        format="coco_panoptic",
         do_reduce_labels=data_args.do_reduce_labels,
         reduce_labels=data_args.do_reduce_labels,
         token=model_args.token,
