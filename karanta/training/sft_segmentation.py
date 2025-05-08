@@ -73,8 +73,7 @@ def augment_and_transform_batch(
 ) -> BatchFeature:
     batch = {
         "pixel_values": [],
-        "mask_labels": [],
-        "class_labels": [],
+        "pixel_mask": [],
     }
 
     for idx, (pil_image, annotation_dict) in enumerate(
@@ -102,10 +101,8 @@ def augment_and_transform_batch(
             masks_path=masks_path,
             return_tensors="pt",
         )
-        print(model_inputs.keys())
         batch["pixel_values"].append(model_inputs["pixel_values"][0])
-        batch["mask_labels"].append(model_inputs["mask_labels"][0])
-        batch["class_labels"].append(model_inputs["class_labels"][0])
+        batch["pixel_mask"].append(model_inputs["pixel_mask"][0])
 
     return batch
 
@@ -115,12 +112,10 @@ def collate_fn(examples):
     batch["pixel_values"] = torch.stack(
         [example["pixel_values"] for example in examples]
     )
-    batch["class_labels"] = [example["class_labels"] for example in examples]
-    batch["mask_labels"] = [example["mask_labels"] for example in examples]
-    if "pixel_mask" in examples[0]:
-        batch["pixel_mask"] = torch.stack(
-            [example["pixel_mask"] for example in examples]
-        )
+    # batch["class_labels"] = [example["class_labels"] for example in examples]
+    # batch["mask_labels"] = [example["mask_labels"] for example in examples]
+    # if "pixel_mask" in examples[0]:
+    batch["pixel_mask"] = torch.stack([example["pixel_mask"] for example in examples])
     return batch
 
 
