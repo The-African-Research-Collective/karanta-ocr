@@ -99,7 +99,8 @@ def augment_and_transform_batch(
         # Preprocess with the processor using the annotation as-is
         model_inputs = image_processor(
             images=output["image"],
-            annotations=output["annotation_with_masks"],
+            annotations=target_with_masks,
+            masks_path=masks_path,
             return_tensors="pt",
         )
         print(model_inputs.keys())
