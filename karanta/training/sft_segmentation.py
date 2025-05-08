@@ -9,7 +9,7 @@ import sys
 import pathlib
 from collections.abc import Mapping
 from functools import partial
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import albumentations as A
@@ -17,7 +17,7 @@ import torch
 from datasets import load_dataset
 from torchmetrics.detection.mean_ap import MeanAveragePrecision
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import transformers
 from transformers import (
     AutoImageProcessor,
@@ -30,7 +30,7 @@ from transformers.image_processing_utils import BatchFeature
 from transformers.trainer import EvalPrediction
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import send_example_telemetry
-from transformers.image_utils import get_image_size, ChannelDimension
+from transformers.image_utils import get_image_size, id_to_rgb
 
 from karanta.training.segmentation_args import (
     DataTrainingArguments,
@@ -39,62 +39,30 @@ from karanta.training.segmentation_args import (
     ModelOutput,
 )
 from karanta.training.utils import ExtendedArgumentParser
-from shapely.geometry import Polygon, Point
-from shapely.geometry.polygon import orient
 
 logger = logging.getLogger(__name__)
 
 
-def make_segmental_mask(
+def make_panoptic_mask(
     output_size: Tuple[int, int],
     masks_path: pathlib.Path,
     file_name: str,
     segments_info: list,
-    input_data_format: Optional[Union[str, "ChannelDimension"]] = None,
-) -> np.ndarray:
+):
     """
-    Make segmental masks for the image, where each segment is a polygon with valid pixels set to 1.
-    Args:
-        output_size (`Tuple[int, int]`): Output size of the mask.
-        masks_path (`pathlib.Path`): Directory to save the mask.
-        file_name (`str`): Name of the file to save the mask.
-        segments_info (`list`): List of segment information (segmentation, bbox, etc.).
-        input_data_format (`Optional[Union[str, ChannelDimension]]`): Optional format information.
+    Create an RGB panoptic segmentation mask image where each segment is uniquely colored by segment_id.
     """
-    # Initialize a blank mask (same size as the image) with all zeros (background).
-    mask = np.zeros(output_size, dtype=np.uint8)
+    mask = Image.new("RGB", output_size[::-1], (0, 0, 0))  # PIL uses (width, height)
+    drawer = ImageDraw.Draw(mask)
 
-    # Loop over each segment in the segment_info list and generate a mask for it.
     for segment in segments_info:
-        segmentation = segment.get("segmentation", [])
-        if segmentation:
-            for poly in segmentation:
-                # Convert the polygon points to a shapely Polygon object.
-                polygon = Polygon(
-                    [(poly[i], poly[i + 1]) for i in range(0, len(poly), 2)]
-                )
-                polygon = orient(polygon)  # Ensure counter-clockwise orientation
+        rgb_color = id_to_rgb(segment["id"])
+        for polygon in segment["segmentation"]:
+            points = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
+            drawer.polygon(points, fill=rgb_color)
 
-                # Check if the polygon is valid (non-zero area).
-                if polygon.is_valid and polygon.area > 0:
-                    # Convert polygon to a mask by filling the polygon region with 1s.
-                    mask_polygon = np.zeros_like(mask, dtype=np.uint8)
-
-                    # Use shapely's rasterize function to fill the polygon on the mask.
-                    minx, miny, maxx, maxy = polygon.bounds
-                    minx, miny, maxx, maxy = map(int, [minx, miny, maxx, maxy])
-
-                    for x in range(minx, maxx):
-                        for y in range(miny, maxy):
-                            if polygon.contains(Point(x, y)):
-                                mask_polygon[y, x] = 1
-
-                    # Combine the mask for this segment with the overall mask.
-                    mask = np.maximum(mask, mask_polygon)
-
-    # Save the mask to the specified path
     save_path = pathlib.Path(masks_path) / file_name
-    Image.fromarray(mask.astype(np.uint8)).save(save_path)
+    mask.save(save_path)
 
 
 def augment_and_transform_batch(
@@ -114,7 +82,7 @@ def augment_and_transform_batch(
     ):
         image = np.array(pil_image)
         output_size = get_image_size(image)
-        make_segmental_mask(
+        make_panoptic_mask(
             output_size=output_size,
             masks_path=masks_path,
             segments_info=annotation_dict["segments_info"],
