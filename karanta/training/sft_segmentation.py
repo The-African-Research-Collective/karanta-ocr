@@ -39,35 +39,61 @@ from karanta.training.segmentation_args import (
     ModelOutput,
 )
 from karanta.training.utils import ExtendedArgumentParser
+from shapely.geometry import Polygon, Point
+from shapely.geometry.polygon import orient
 
 logger = logging.getLogger(__name__)
 
 
-# Modified from transformers.models.vilt.image_processing_vilt.make_pixel_mask
-def make_pixel_mask(
-    image: np.ndarray,
+def make_segmental_mask(
     output_size: Tuple[int, int],
     masks_path: pathlib.Path,
     file_name: str,
-    input_data_format: Optional[Union[str, ChannelDimension]] = None,
+    segments_info: list,
+    input_data_format: Optional[Union[str, "ChannelDimension"]] = None,
 ) -> np.ndarray:
     """
-    Make a pixel mask for the image, where 1 indicates a valid pixel and 0 indicates padding.
-
+    Make segmental masks for the image, where each segment is a polygon with valid pixels set to 1.
     Args:
-        image (`np.ndarray`):
-            Image to make the pixel mask for.
-        output_size (`Tuple[int, int]`):
-            Output size of the mask.
-        masks_path (`pathlib.Path`):
-            Directory to save the mask.
-        file_name (`str`):
-            Name of the file to save the mask.
+        output_size (`Tuple[int, int]`): Output size of the mask.
+        masks_path (`pathlib.Path`): Directory to save the mask.
+        file_name (`str`): Name of the file to save the mask.
+        segments_info (`list`): List of segment information (segmentation, bbox, etc.).
+        input_data_format (`Optional[Union[str, ChannelDimension]]`): Optional format information.
     """
+    # Initialize a blank mask (same size as the image) with all zeros (background).
+    mask = np.zeros(output_size, dtype=np.uint8)
+
+    # Loop over each segment in the segment_info list and generate a mask for it.
+    for segment in segments_info:
+        segmentation = segment.get("segmentation", [])
+        if segmentation:
+            for poly in segmentation:
+                # Convert the polygon points to a shapely Polygon object.
+                polygon = Polygon(
+                    [(poly[i], poly[i + 1]) for i in range(0, len(poly), 2)]
+                )
+                polygon = orient(polygon)  # Ensure counter-clockwise orientation
+
+                # Check if the polygon is valid (non-zero area).
+                if polygon.is_valid and polygon.area > 0:
+                    # Convert polygon to a mask by filling the polygon region with 1s.
+                    mask_polygon = np.zeros_like(mask, dtype=np.uint8)
+
+                    # Use shapely's rasterize function to fill the polygon on the mask.
+                    minx, miny, maxx, maxy = polygon.bounds
+                    minx, miny, maxx, maxy = map(int, [minx, miny, maxx, maxy])
+
+                    for x in range(minx, maxx):
+                        for y in range(miny, maxy):
+                            if polygon.contains(Point(x, y)):
+                                mask_polygon[y, x] = 1
+
+                    # Combine the mask for this segment with the overall mask.
+                    mask = np.maximum(mask, mask_polygon)
+
+    # Save the mask to the specified path
     save_path = pathlib.Path(masks_path) / file_name
-    input_height, input_width = get_image_size(image, channel_dim=input_data_format)
-    mask = np.zeros(output_size, dtype=np.int64)
-    mask[:input_height, :input_width] = 1
     Image.fromarray(mask.astype(np.uint8)).save(save_path)
 
 
@@ -88,10 +114,10 @@ def augment_and_transform_batch(
     ):
         image = np.array(pil_image)
         output_size = get_image_size(image)
-        make_pixel_mask(
-            image=image,
+        make_segmental_mask(
             output_size=output_size,
             masks_path=masks_path,
+            segments_info=annotation_dict["segments_info"],
             file_name=annotation_dict["file_name"],
         )
         # generate masks
