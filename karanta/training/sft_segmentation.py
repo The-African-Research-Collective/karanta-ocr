@@ -30,6 +30,7 @@ from transformers.image_processing_utils import BatchFeature
 from transformers.trainer import EvalPrediction
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import send_example_telemetry
+from transformers.image_utils import get_image_size
 
 from karanta.training.segmentation_args import (
     DataTrainingArguments,
@@ -80,25 +81,28 @@ def augment_and_transform_batch(
         zip(examples["image"], examples["label"])
     ):
         image = np.array(pil_image)
-        # output_size = get_image_size(image)
-        # make_panoptic_mask(
-        #     output_size=output_size,
-        #     masks_path=masks_path,
-        #     segments_info=annotation_dict["segments_info"],
-        #     file_name=annotation_dict["file_name"],
-        # )
-        # generate masks
-        # target_with_masks = image_processor.prepare_annotation(
-        #     image=image, target=annotation_dict, masks_path=masks_path
-        # )
-        output = transform(
-            image=image,  # annotation_with_masks=target_with_masks["masks"]
+        output_size = get_image_size(image)
+        make_panoptic_mask(
+            output_size=output_size,
+            masks_path=masks_path,
+            segments_info=annotation_dict["segments_info"],
+            file_name=annotation_dict["file_name"],
         )
+        # generate masks
+        target_with_masks = image_processor.prepare_annotation(
+            image=image, target=annotation_dict, masks_path=masks_path
+        )
+        output = transform(
+            image=image, annotation_with_masks=target_with_masks["masks"]
+        )
+        target_with_masks["masks"] = output["annotation_with_masks"]
+        target_with_masks["file_name"] = annotation_dict["file_name"]
+        target_with_masks["segments_info"] = annotation_dict["segments_info"]
 
         # Preprocess with the processor using the annotation as-is
         model_inputs = image_processor(
             images=output["image"],
-            annotations=annotation_dict,
+            annotations=target_with_masks["masks"],
             masks_path=masks_path,
             return_tensors="pt",
         )
