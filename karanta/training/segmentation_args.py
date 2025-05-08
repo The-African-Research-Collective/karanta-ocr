@@ -191,11 +191,11 @@ class ExperimentArguments:
         metadata={"help": "Total number of training epochs to perform."},
     )
     per_device_train_batch_size: int = field(
-        default=8,
+        default=1,
         metadata={"help": "Batch size per GPU/TPU core/CPU for training."},
     )
     per_device_eval_batch_size: int = field(
-        default=8,
+        default=1,
         metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."},
     )
     learning_rate: float = field(
