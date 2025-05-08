@@ -95,14 +95,10 @@ def augment_and_transform_batch(
         output = transform(
             image=image, annotation_with_masks=target_with_masks["masks"]
         )
-        target_with_masks["masks"] = output["annotation_with_masks"]
-        target_with_masks["file_name"] = annotation_dict["file_name"]
-        target_with_masks["segments_info"] = annotation_dict["segments_info"]
 
         # Preprocess with the processor using the annotation as-is
         model_inputs = image_processor(
             images=output["image"],
-            annotations=target_with_masks["masks"],
             masks_path=masks_path,
             return_tensors="pt",
         )
