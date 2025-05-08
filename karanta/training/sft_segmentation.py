@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from functools import partial
 from typing import Any, Optional
 
+import numpy as np
 import albumentations as A
 import torch
 from datasets import load_dataset
@@ -58,7 +59,7 @@ def augment_and_transform_batch(
             target=annotation_dict,
         )
         output = transform(
-            image=pil_image, annotation_with_masks=target_with_masks["masks"]
+            image=np.array(pil_image), annotation_with_masks=target_with_masks["masks"]
         )
 
         # Preprocess with the processor using the annotation as-is
