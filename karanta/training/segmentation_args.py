@@ -220,6 +220,12 @@ class ExperimentArguments:
             "help": "Remove columns not required by the model when using an nlp.Dataset."
         },
     )
+    fp16: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to use 16-bit (mixed) precision (through NVIDIA apex) instead of 32-bit"
+        },
+    )
     hub_model_id: str = field(
         default=None,
         metadata={
