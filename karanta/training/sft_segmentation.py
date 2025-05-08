@@ -56,7 +56,7 @@ def make_panoptic_mask(
     drawer = ImageDraw.Draw(mask)
 
     for segment in segments_info:
-        rgb_color = transformers.image_transforms.id_to_rgb(segment["id"])
+        rgb_color = tuple(transformers.image_transforms.id_to_rgb(segment["id"]))
         for polygon in segment["segmentation"]:
             points = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
             drawer.polygon(points, fill=rgb_color)
