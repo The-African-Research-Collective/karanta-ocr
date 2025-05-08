@@ -53,13 +53,14 @@ def augment_and_transform_batch(
     for idx, (pil_image, annotation_dict) in enumerate(
         zip(examples["image"], examples["label"])
     ):
+        image = np.array(pil_image)
         # generate masks
         target_with_masks = image_processor.prepare_annotation(
-            image=pil_image,
+            image=image,
             target=annotation_dict,
         )
         output = transform(
-            image=np.array(pil_image), annotation_with_masks=target_with_masks["masks"]
+            image=image, annotation_with_masks=target_with_masks["masks"]
         )
 
         # Preprocess with the processor using the annotation as-is
