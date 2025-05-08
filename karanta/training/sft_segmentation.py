@@ -348,7 +348,7 @@ def main(args: ExtendedArgumentParser):
     training_args.batch_eval_metrics = True
     training_args.remove_unused_columns = False
 
-    masks_dir = pathlib.Path(training_args.output_dir) / "masks"
+    masks_dir = pathlib.Path("masks")
     os.makedirs(masks_dir, exist_ok=True)
 
     # # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
