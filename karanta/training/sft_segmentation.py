@@ -55,18 +55,12 @@ def augment_and_transform_batch(
     ):
         image = np.array(pil_image)
         # generate masks
-        target_with_masks = image_processor.prepare_annotation(
-            image=image,
-            target=annotation_dict,
-        )
-        output = transform(
-            image=image, annotation_with_masks=target_with_masks["masks"]
-        )
+        output = transform(image=image)
 
         # Preprocess with the processor using the annotation as-is
         model_inputs = image_processor(
             images=output["image"],
-            annotations=output["annotation_with_masks"],
+            annotations=annotation_dict,
             return_tensors="pt",
         )
         print(model_inputs.keys())
