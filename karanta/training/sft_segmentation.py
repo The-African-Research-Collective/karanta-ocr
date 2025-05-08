@@ -67,12 +67,10 @@ def augment_and_transform_batch(
             annotations=output["annotation_with_masks"],
             return_tensors="pt",
         )
-
+        print(model_inputs.keys())
         batch["pixel_values"].append(model_inputs["pixel_values"][0])
         batch["mask_labels"].append(model_inputs["mask_labels"][0])
         batch["class_labels"].append(model_inputs["class_labels"][0])
-
-        print(model_inputs.keys())
 
     return batch
 
