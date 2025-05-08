@@ -30,7 +30,7 @@ from transformers.image_processing_utils import BatchFeature
 from transformers.trainer import EvalPrediction
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import send_example_telemetry
-from transformers.image_utils import get_image_size, id_to_rgb
+from transformers.image_utils import get_image_size
 
 from karanta.training.segmentation_args import (
     DataTrainingArguments,
@@ -56,7 +56,7 @@ def make_panoptic_mask(
     drawer = ImageDraw.Draw(mask)
 
     for segment in segments_info:
-        rgb_color = id_to_rgb(segment["id"])
+        rgb_color = transformers.image_transforms.id_to_rgb(segment["id"])
         for polygon in segment["segmentation"]:
             points = [(polygon[i], polygon[i + 1]) for i in range(0, len(polygon), 2)]
             drawer.polygon(points, fill=rgb_color)
