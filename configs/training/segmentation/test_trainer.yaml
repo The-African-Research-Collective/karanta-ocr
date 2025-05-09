@@ -1,7 +1,7 @@
 # =============================================================================
 # ========================= Model Arguments ===================================
 # =============================================================================
-model_name_or_path: nvidia/mit-b0
+model_name_or_path: facebook/detr-resnet-50-panoptic
 config_name: null 
 image_processor_name: null 
 cache_dir: null
@@ -11,7 +11,7 @@ trust_remote_code: false
 # =============================================================================
 # ========================= Data Arguments ===================================
 # =============================================================================
-dataset_name: "imagefolder"  # Dataset type
+dataset_name: Dugerij/newspaper_segmentation_3 # Dataset type
 train_dir: null
 validation_dir: null
 dataset_mixer: null  
@@ -32,4 +32,4 @@ learning_rate: 5e-5
 num_train_epochs: 10
 seed: 42  
 push_to_hub: true 
-hub_model_id: taresco/newspaper_segformer
+hub_model_id: taresco/newspaper_segmentation_example
