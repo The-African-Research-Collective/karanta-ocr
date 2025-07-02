@@ -10,8 +10,8 @@ Sample usage:python -m karanta.data.create_batch_data_prompts --data_path /Users
 
 import os
 import yaml
+import json
 import logging
-import argparse
 import random
 import jsonlines
 
@@ -107,44 +107,50 @@ def build_page_query_openai(
     with open(PROMPT_PATH, "r") as stream:
         prompt_template_dict = yaml.safe_load(stream)
 
-        if "system" in prompt_template_dict:
-            prompt_template_dict["system"] = Template(prompt_template_dict["system"])
+        # if "system" in prompt_template_dict:
+        #     prompt_template_dict["system"] = Template(prompt_template_dict["system"])
+
+        if "newspaper_system" in prompt_template_dict:
+            prompt_template_dict["system"] = Template(
+                prompt_template_dict["newspaper_system"]
+            )
 
     # DEBUG crappy temporary code here that does the actual api call live so I can debug it a bit
-    # from openai import OpenAI
+    from openai import OpenAI
 
-    # client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # print(
-    #     f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}"
-    # )
+    print(
+        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}"
+    )
 
-    # response = client.chat.completions.create(
-    #     model="gpt-4.1-mini-2025-04-14",
-    #     messages=[
-    #         {
-    #             "role": "user",
-    #             "content": [
-    #                 {
-    #                     "type": "text",
-    #                     "text": prompt_template_dict["system"].render(
-    #                         {"base_text": anchor_text}
-    #                     ),
-    #                 },
-    #                 {
-    #                     "type": "image_url",
-    #                     "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-    #                 },
-    #             ],
-    #         }
-    #     ],
-    #     temperature=0.1,
-    #     max_tokens=3000,
-    #     logprobs=True,
-    #     top_logprobs=5,
-    #     response_format=openai_response_format_schema(),
-    # )
-    # print(response)
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini-2025-04-14",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt_template_dict["system"].render(
+                            {"base_text": anchor_text}
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                    },
+                ],
+            }
+        ],
+        temperature=0.1,
+        max_tokens=3000,
+        logprobs=True,
+        top_logprobs=5,
+        response_format=openai_response_format_schema(),
+    )
+    print(response.choices[0].message.content)
+    print(json.loads(response.choices[0].message.content)["natural_text"])
 
     # Construct OpenAI Batch API request format#
     # There are a few tricks to know when doing data processing with OpenAI's apis
@@ -154,38 +160,39 @@ def build_page_query_openai(
     # Also, structured outputs let you cheat, because the order in which fields are in your schema, is the order in which the model will answer them, so you can have it answer some "preperatory" or "chain of thought" style questions first before going into the meat of your response, which is going to give better answers
     # Check your prompt for typos, it makes a performance difference!
     # Ask for logprobs, it's not any more expensive and you can use them later to help identify problematic responses
-    return {
-        "custom_id": f"{pretty_pdf_path}-{page}",
-        "method": "POST",
-        "url": "/v1/chat/completions",
-        "body": {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt_template_dict["system"].render(
-                                {"base_text": anchor_text}
-                            ),
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}"
-                            },
-                        },
-                    ],
-                }
-            ],
-            "temperature": 0.1,
-            "max_tokens": 6000,
-            "logprobs": True,
-            "top_logprobs": 5,
-            "response_format": openai_response_format_schema(),
-        },
-    }
+
+    # return {
+    #     "custom_id": f"{pretty_pdf_path}-{page}",
+    #     "method": "POST",
+    #     "url": "/v1/chat/completions",
+    #     "body": {
+    #         "model": model_name,
+    #         "messages": [
+    #             {
+    #                 "role": "user",
+    #                 "content": [
+    #                     {
+    #                         "type": "text",
+    #                         "text": prompt_template_dict["system"].render(
+    #                             {"base_text": anchor_text}
+    #                         ),
+    #                     },
+    #                     {
+    #                         "type": "image_url",
+    #                         "image_url": {
+    #                             "url": f"data:image/png;base64,{image_base64}"
+    #                         },
+    #                     },
+    #                 ],
+    #             }
+    #         ],
+    #         "temperature": 0.1,
+    #         "max_tokens": 6000,
+    #         "logprobs": True,
+    #         "top_logprobs": 5,
+    #         "response_format": openai_response_format_schema(),
+    #     },
+    # }
 
 
 @timeit
@@ -346,53 +353,57 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Create batch data prompts and write them to a file."
+    # parser = argparse.ArgumentParser(
+    #     description="Create batch data prompts and write them to a file."
+    # )
+    # parser.add_argument(
+    #     "--data_path", required=True, help="Path to the directory containing PDF files."
+    # )
+    # parser.add_argument(
+    #     "--output_path",
+    #     required=True,
+    #     help="Path to the directory to save output prompts.",
+    # )
+    # parser.add_argument(
+    #     "--num_processes",
+    #     type=int,
+    #     default=4,
+    #     help="Number of processes to use for parallel processing.",
+    # )
+    # parser.add_argument(
+    #     "--model_group",
+    #     type=ModelGroup,
+    #     choices=[model_group.value for model_group in ModelGroup],
+    #     required=True,
+    #     help="Model group to use for processing.",
+    # )
+    # parser.add_argument(
+    #     "--model",
+    #     type=Model,
+    #     choices=[model.value for model in Model],
+    #     required=True,
+    #     help="Model to use for processing.",
+    # )
+    # parser.add_argument(
+    #     "--num_pages_per_pdf",
+    #     type=int,
+    #     default=10,
+    #     help="Number of pages to process per PDF file.",
+    # )
+    # parser.add_argument(
+    #     "--request_per_batch_file",
+    #     type=int,
+    #     default=1000,
+    #     help="Number of requests to write per batch file.",
+    # )
+    # args = parser.parse_args()
+    # main(args)
+    local_pdf_path = "/Users/odunayoogundepo/newspaper-parser/data/train_images/2005november_pg_7.pdf"
+    page_num = 1
+
+    build_page_query_openai(
+        local_pdf_path, local_pdf_path, page_num, "gpt-4.1-2025-04-14"
     )
-    parser.add_argument(
-        "--data_path", required=True, help="Path to the directory containing PDF files."
-    )
-    parser.add_argument(
-        "--output_path",
-        required=True,
-        help="Path to the directory to save output prompts.",
-    )
-    parser.add_argument(
-        "--num_processes",
-        type=int,
-        default=4,
-        help="Number of processes to use for parallel processing.",
-    )
-    parser.add_argument(
-        "--model_group",
-        type=ModelGroup,
-        choices=[model_group.value for model_group in ModelGroup],
-        required=True,
-        help="Model group to use for processing.",
-    )
-    parser.add_argument(
-        "--model",
-        type=Model,
-        choices=[model.value for model in Model],
-        required=True,
-        help="Model to use for processing.",
-    )
-    parser.add_argument(
-        "--num_pages_per_pdf",
-        type=int,
-        default=10,
-        help="Number of pages to process per PDF file.",
-    )
-    parser.add_argument(
-        "--request_per_batch_file",
-        type=int,
-        default=1000,
-        help="Number of requests to write per batch file.",
-    )
-    args = parser.parse_args()
-    main(args)
-    # local_pdf_path = "/Users/odunayoogundepo/Downloads/Canada Benefits 2025.pdf"
-    # page_num = 3
 
     # import asyncio
 
