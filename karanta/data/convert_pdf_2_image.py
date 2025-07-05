@@ -7,9 +7,10 @@ import logging
 import tempfile
 from pathlib import Path
 import argparse
+from PIL import Image
 from multiprocessing import Pool, cpu_count
 
-from karanta.data.utils import split_pdf2image
+from karanta.data.utils import convert_pdf2image
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +30,7 @@ def process_single_pdf(pdf_path, output_base_path, output_format):
         pdf_basename = os.path.splitext(item)[0]
 
         with tempfile.TemporaryDirectory() as path:
-            pages = split_pdf2image(data_path=full_path, output_dir=path)
+            pages = convert_pdf2image(data_path=full_path, output_dir=path)
 
             # Attach the PDF basename to each page
             for page in pages:
@@ -48,16 +49,78 @@ def process_single_pdf(pdf_path, output_base_path, output_format):
         return item, False
 
 
+def image_to_pdf(image_path, output_dir="output"):
+    """
+    Convert an image to PDF and save it to the specified output directory.
+    The PDF will have the same name as the original image (without extension).
+
+    Args:
+        image_path (str): Path to the input image file
+        output_dir (str): Directory to save the PDF (default: "output")
+
+    Returns:
+        str: Path to the created PDF file
+
+    Raises:
+        FileNotFoundError: If the input image doesn't exist
+        ValueError: If the image format is not supported
+    """
+
+    # Check if input image exists
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"Image file not found: {image_path}")
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Get the base filename without extension
+    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    pdf_name = f"{base_name}.pdf"
+
+    # Full output path
+    output_path = os.path.join(output_dir, pdf_name)
+
+    try:
+        # Open and convert image
+        with Image.open(image_path) as img:
+            # Convert to RGB if necessary (for JPEG compatibility in PDF)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+
+            # Save as PDF
+            img.save(output_path, "PDF", resolution=100.0)
+
+        print(f"Successfully converted {image_path} to {output_path}")
+        return output_path
+
+    except Exception as e:
+        raise ValueError(f"Error converting image to PDF: {str(e)}")
+
+
 def main(args):
     output_base_path = Path(args.output_base_path)
     output_format = args.output_format.upper()
 
     # Collect all PDF files to process
     pdf_files = []
-    for item in os.listdir(args.data_path):
-        full_path = os.path.join(args.data_path, item)
-        if os.path.isfile(full_path) and item.lower().endswith(".pdf"):
-            pdf_files.append((full_path, item))
+    if os.path.isfile(args.data_path):
+        # If a single file is provided, add it to the list
+        pdf_files.append((args.data_path, os.path.basename(args.data_path)))
+    else:
+        for item in os.listdir(args.data_path):
+            full_path = os.path.join(args.data_path, item)
+            if os.path.isfile(full_path):
+                if item.lower().endswith(".pdf"):
+                    pdf_files.append((full_path, item))
+                elif item.lower().endswith(
+                    (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp")
+                ):
+                    # Convert image to PDF if needed
+                    try:
+                        image_to_pdf(full_path, output_base_path)
+                        logger.info(f"Converted {item} to PDF.")
+                    except Exception as e:
+                        logger.error(f"Failed to convert {item} to PDF: {str(e)}")
 
     # Determine the number of processes to use
     num_processes = min(
@@ -110,8 +173,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_format",
         default="JPEG",
-        help="Image format for output files (default: JPEG). Supported formats: JPEG, PNG, BMP, GIF, TIFF, WEBP.",
-        choices=["JPEG", "PNG", "BMP", "GIF", "TIFF", "WEBP"],
+        help="Image format for output files (default: JPEG). Supported formats: JPEG, PNG, BMP, GIF, TIFF, WEBP, PDF",
+        choices=["JPEG", "PNG", "BMP", "GIF", "TIFF", "WEBP", "PDF"],
     )
     parser.add_argument(
         "--num_processes",

@@ -7,6 +7,7 @@
 
 # Karanta OCR
 Karanta means "read" in Hausa, a language spoken in Nigeria and other West African countries. This project is a OCR toolkit for processing scanned documents containing content in african languages and extracting the text in them at scale.
+This project is a extension of the [OlmoOCR](https://github.com/allenai/olmocr) project with an additional layer containing additional processing to handle multi-article images/documents such as newspaper etc.
 
 ## OCR Pipeline
 
