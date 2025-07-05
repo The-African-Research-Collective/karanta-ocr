@@ -104,18 +104,24 @@ def build_page_query_openai(
     image_base64 = render_pdf_to_base64png(local_pdf_path, page, TARGET_IMAGE_DIM)
     anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
 
+    print(anchor_text)
+
+    image_page = True
+
+    if len(anchor_text.split("\n")) > 10:
+        image_page = False
+
     with open(PROMPT_PATH, "r") as stream:
         prompt_template_dict = yaml.safe_load(stream)
 
-        # if "system" in prompt_template_dict:
-        #     prompt_template_dict["system"] = Template(prompt_template_dict["system"])
-
-        if "newspaper_system" in prompt_template_dict:
+        if image_page:
             prompt_template_dict["system"] = Template(
                 prompt_template_dict["newspaper_system"]
             )
+        else:
+            prompt_template_dict["system"] = Template(prompt_template_dict["system"])
 
-    # DEBUG crappy temporary code here that does the actual api call live so I can debug it a bit
+    # # DEBUG crappy temporary code here that does the actual api call live so I can debug it a bit
     from openai import OpenAI
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -144,12 +150,12 @@ def build_page_query_openai(
             }
         ],
         temperature=0.1,
-        max_tokens=3000,
+        max_tokens=10000,
         logprobs=True,
         top_logprobs=5,
         response_format=openai_response_format_schema(),
     )
-    print(response.choices[0].message.content)
+    # print(response.choices[0].message.content)
     print(json.loads(response.choices[0].message.content)["natural_text"])
 
     # Construct OpenAI Batch API request format#
@@ -398,7 +404,9 @@ if __name__ == "__main__":
     # )
     # args = parser.parse_args()
     # main(args)
-    local_pdf_path = "/Users/odunayoogundepo/newspaper-parser/data/train_images/2005november_pg_7.pdf"
+    # local_pdf_path = "/Users/odunayoogundepo/newspaper-parser/data/train/supplement_august_september.pdf"
+    local_pdf_path = "/Users/odunayoogundepo/newspaper-parser/data/train_images/newspaper 18_pg_28.pdf"
+
     page_num = 1
 
     build_page_query_openai(

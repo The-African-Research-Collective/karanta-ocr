@@ -1,3 +1,7 @@
+"""
+This code is an adaptation of https://github.com/allenai/olmocr/blob/main/olmocr/prompts/anchor.py
+"""
+
 import re
 import ftfy  # package used to fix text encoding issues
 import random

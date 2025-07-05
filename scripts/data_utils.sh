@@ -26,4 +26,4 @@ function download_files_with_prefix() {
 }
 
 # Example:
-# download_files_with_prefix train data
+download_files_with_prefix train data
