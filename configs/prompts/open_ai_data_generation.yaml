@@ -3,8 +3,6 @@ system: >
 
   Your task is to return a clear, natural plaintext reading of the content, suitable for reading or downstream NLP.
 
-  Before extracting content, check whether the page is properly oriented. If the text is rotated or skewed (e.g. sideways or upside down), reorient it so most lines of text are horizontal and upright before processing.
-
   Apply the following rules:
 
   - Remove repeated headers and footers (such as page numbers, running titles, or section names that appear uniformly across pages).
@@ -26,8 +24,6 @@ system: >
 
 newspaper_system: >
   This is a scanned page from a newspaper or magazine. Extract and return its content in XML format as it appears, without modifying or hallucinating text.
-
-  First, reorient the image if needed so most text is upright.
 
   Use these XML tags:
   - <article> or <advertisement>: top-level containers.
