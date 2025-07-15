@@ -1,22 +1,59 @@
 system: >
-  Below is the image of one page of a PDF document, as well as some raw textual content that was previously extracted for it that includes position information for each image and block of text (The origin [0x0] of the coordinates is in the lower left corner of the image).
-  Just return the plain text representation of this document as if you were reading it naturally.\n
-  Turn equations into a LaTeX representation, and tables into markdown format. Remove the headers and footers, but keep references and footnotes.\n
-  Read any natural handwriting.\n
-  This is likely one page out of several in the document, so be sure to preserve any sentences that come from the previous page, or continue onto the next page, exactly as they are.\n
-  If there is no text at all that you think you should read, you can output null.\n
-  if the document contains diacritics, please include them in the output.\n
-  Do not hallucinate.\n
-  RAW_TEXT_START\n{{base_text}}\nRAW_TEXT_END
+  You are given one page from a PDF document, along with its extracted raw text and layout information.
+
+  Your task is to return a clear, natural plaintext reading of the content, suitable for reading or downstream NLP.
+
+  Before extracting content, check whether the page is properly oriented. If the text is rotated or skewed (e.g. sideways or upside down), reorient it so most lines of text are horizontal and upright before processing.
+
+  Apply the following rules:
+
+  - Remove repeated headers and footers (such as page numbers, running titles, or section names that appear uniformly across pages).
+  - Retain footnotes, endnotes, and references exactly as they appear.
+  - Preserve sentence fragments that start on a previous page or continue onto the next — do not complete or modify them.
+  - Convert equations to LaTeX syntax.
+  - Convert tables to Markdown format.
+  - Transcribe all handwritten or non-standard text if legible.
+  - Include all diacritics and non-English characters as they appear.
+  - Do not hallucinate or infer missing, obscured, or unreadable content.
+  - If there is no meaningful textual content, return null (without quotes, explanation, or formatting).
+
+  Output must be **plaintext only** — no XML, JSON, or additional metadata.
+
+  RAW_TEXT_START
+  {{base_text}}
+  RAW_TEXT_END
+
 
 newspaper_system: >
-  Below is the image of one page of a document, as well as some position information for each image and block of text (The origin [0x0] of the coordinates is in the lower left corner of the image).
-  This document page could contain articles, advertisements, images, and other content. Return the text representation of each document as if you were reading it naturally.\n
-  Separate the articles and advertisements inside an xml tag called <article> or <advertisement> respectively. Include the header of each article inside a <header> tag, and the body inside a <body> tag. If there is no header, just use the body tag.\n
-  Read any natural handwriting.\n
-  This is likely one page out of several in the document, so be sure to preserve any sentences that come from the previous page, or continue onto the next page, exactly as they are.\n
-  If there is no text at all that you think you should read, you can output null.\n
-  if the document contains diacritics, please include them in the output.\n
-  if there are pictures with captions, ignore the caption of the picture in the output.\n
-  Do not hallucinate or generate any extra text other than those in the document.\n
-  RAW_TEXT_START\n{{base_text}}\nRAW_TEXT_END
+  This is a scanned page from a newspaper or magazine. Extract and return its content in XML format as it appears, without modifying or hallucinating text.
+
+  First, reorient the image if needed so most text is upright.
+
+  Use these XML tags:
+  - <article> or <advertisement>: top-level containers.
+  - <header>: title or headline, if clearly present.
+  - <body>: main text content (required).
+  - <table>: tabular content like scores, schedules, etc. Convert tables to Markdown.
+
+  Rules:
+  - Every scanned page must be parsed into one or more <article> or <advertisement> containers.
+  - ALL readable text MUST be fully enclosed in either <article> or <advertisement> containers. Do NOT output any plain text outside of these XML structures under ANY condition.
+  - The <header> tag is optional. If no clear title or headline is visually separated, do not include it.
+  - The <body> tag is required for all articles/advertisements.
+  - Tables should be converted to Markdown and enclosed in a <table> tag.
+  - Return only XML-formatted content. Do not include any extra explanations or fallback raw text.
+  - End the response after the final closing XML tag. Do not add commentary or raw text.
+  - If there's no meaningful text, return null.
+  - Ensure output is well-formed XML. Malformed outputs will be discarded.
+
+  Example:
+    - <article>
+    <header>
+      RANDOM HEADER
+    </header>
+    <body>
+      Some body of text
+      Continued on Page 16
+    </body>
+  </article>
+
