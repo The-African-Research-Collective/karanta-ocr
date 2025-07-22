@@ -5,7 +5,8 @@ For generating training and testing data, it uses the OpenAI API to process PDF 
 Sample usage:python -m karanta.data.create_batch_data_prompts --data_path /Users/odunayoogundepo/Downloads/annotation_images \
                 --output_path /Users/odunayoogundepo/Downloads/annotation_images_transcribed \
                 --model_group openai \
-                --model gpt-4.1-mini-2025-04-14
+                --model gpt-4.1-mini-2025-04-14 \
+                --azure_source_dir ...
 """
 
 import os
@@ -32,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 @timeit
-def build_page_query_openai(local_pdf_path: str, page: int, model_name: str) -> dict:
+def build_page_query_openai(
+    local_pdf_path: str, page: int, model_name: str, azure_source_dir: str
+) -> dict:
     image_base64 = render_pdf_to_base64png(local_pdf_path, page, TARGET_IMAGE_DIM)
     anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
 
@@ -55,6 +58,7 @@ def build_page_query_openai(local_pdf_path: str, page: int, model_name: str) -> 
 
     return {
         "custom_id": f"{pretty_pdf_path}-{page}",
+        "azure_source_dir": azure_source_dir,
         "method": "POST",
         "url": "/v1/chat/completions",
         "body": {
@@ -89,7 +93,7 @@ def build_page_query_openai(local_pdf_path: str, page: int, model_name: str) -> 
 
 @timeit
 def build_page_query_vllm_olmoocr(
-    local_pdf_path: str, page: int, model_name: str
+    local_pdf_path: str, page: int, model_name: str, azure_source_dir: str = None
 ) -> dict:
     """
     Turns out that the OlmoOCR model is already pretty good on a lot of our content so the goal is to sort of
@@ -110,6 +114,7 @@ def build_page_query_vllm_olmoocr(
     # Construct A list of batch requests to send to the VLLM server
     return {
         "custom_id": f"{pretty_pdf_path}-{page}",
+        "azure_source_dir": azure_source_dir,
         "model": model_name,
         "messages": [
             {
@@ -165,49 +170,66 @@ def main(args):
     output_file = jsonlines.open(output_file_path, "a")
 
     for pdf_path, item in pdf_files:
-        # check how many pages are in the pdf
-        with open(pdf_path, "rb") as pdf_file:
-            reader = PdfReader(pdf_file)
-            total_pages = len(reader.pages)
+        try:
+            # check how many pages are in the pdf
+            with open(pdf_path, "rb") as pdf_file:
+                reader = PdfReader(pdf_file)
+                total_pages = len(reader.pages)
 
-            if args.num_pages_per_pdf >= total_pages:
-                pages_available = total_pages
-                sample_pages = range(total_pages)
-            else:
-                pages_available = args.num_pages_per_pdf
-                sample_pages = random.sample(range(total_pages), args.num_pages_per_pdf)
-
-            logger.info(f"Processing {item} with {total_pages} pages")
-            logger.info(f"Processing {pages_available} pages")
-
-            # Sample pages from the PDF
-            logger.info(f"Sampled pages: {sample_pages}")
-
-            # process the sampled pages
-            for page in sample_pages:
-                if args.model_group == ModelGroup.OPENAI:
-                    prompt = build_page_query_openai(pdf_path, item, page, args.model)
-                elif args.model_group == ModelGroup.OLMO_VLLM:
-                    prompt = build_page_query_vllm_olmoocr(
-                        pdf_path, item, page, args.model
-                    )
+                if args.num_pages_per_pdf == -1:
+                    pages_available = total_pages
+                    sample_pages = range(total_pages)
+                elif args.num_pages_per_pdf >= total_pages:
+                    pages_available = total_pages
+                    sample_pages = range(total_pages)
                 else:
-                    raise ValueError(f"Unsupported model group: {args.model_group}")
-
-                # Save the prompt to a file
-                output_file.write(prompt)
-                write_count += 1
-
-                # Check if we need to create a new file
-                if write_count >= args.request_per_batch_file:
-                    output_file.close()
-                    file_count += 1
-                    write_count = 0
-                    output_file_path = os.path.join(
-                        args.output_path,
-                        f"batch_llm_requsts_file_{args.model.replace('/', '_').replace('.', '_').replace('-', '_')}_{file_count}.jsonl",
+                    pages_available = args.num_pages_per_pdf
+                    sample_pages = random.sample(
+                        range(total_pages), args.num_pages_per_pdf
                     )
-                    output_file = jsonlines.open(output_file_path, "a")
+
+                logger.info(f"Processing {item} with {total_pages} pages")
+                logger.info(f"Processing {pages_available} pages")
+
+                # Sample pages from the PDF
+                logger.info(f"Sampled pages: {sample_pages}")
+
+                # process the sampled pages
+                for page in sample_pages:
+                    if args.model_group == ModelGroup.OPENAI:
+                        prompt = build_page_query_openai(
+                            pdf_path,
+                            page,
+                            args.model,
+                            azure_source_dir=args.azure_source_dir,
+                        )
+                    elif args.model_group == ModelGroup.OLMO_VLLM:
+                        prompt = build_page_query_vllm_olmoocr(
+                            pdf_path,
+                            page,
+                            args.model,
+                            azure_source_dir=args.azure_source_dir,
+                        )
+                    else:
+                        raise ValueError(f"Unsupported model group: {args.model_group}")
+
+                    # Save the prompt to a file
+                    output_file.write(prompt)
+                    write_count += 1
+
+                    # Check if we need to create a new file
+                    if write_count >= args.request_per_batch_file:
+                        output_file.close()
+                        file_count += 1
+                        write_count = 0
+                        output_file_path = os.path.join(
+                            args.output_path,
+                            f"batch_llm_requsts_file_{args.model.replace('/', '_').replace('.', '_').replace('-', '_')}_{file_count}.jsonl",
+                        )
+                        output_file = jsonlines.open(output_file_path, "a")
+        except Exception as e:
+            logger.error(f"Error processing {item}: {e}")
+            continue
 
 
 if __name__ == "__main__":
@@ -245,7 +267,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_pages_per_pdf",
         type=int,
-        default=10,
+        default=-1,
         help="Number of pages to process per PDF file.",
     )
     parser.add_argument(
@@ -253,6 +275,13 @@ if __name__ == "__main__":
         type=int,
         default=1000,
         help="Number of requests to write per batch file.",
+    )
+    parser.add_argument(
+        "--azure_source_dir",
+        type=str,
+        default=None,
+        required=True,
+        help="Azure source directory for the prompts.",
     )
     args = parser.parse_args()
     main(args)

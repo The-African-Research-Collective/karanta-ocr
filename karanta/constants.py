@@ -7,7 +7,7 @@ PROMPT_PATH = "configs/prompts/open_ai_data_generation.yaml"
 class ModelGroup(str, Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
-    OLMO_VLLM = "olm_vllm"
+    OLMO_VLLM = "olmo_vllm"
 
 
 class Model(str, Enum):
