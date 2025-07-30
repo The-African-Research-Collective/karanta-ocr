@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import uuid
 import argparse
 import jsonlines
@@ -7,9 +8,9 @@ from utils.gpu_router import GPURouter
 from workers.celery_app import celery_app
 
 
-def process_batch_job(job, job_manager, gpus=None):
+def process_batch_job(job, job_manager, db_path, output_path, ports=None):
     """Process batch job with failure recovery"""
-    router = GPURouter(gpus=gpus)
+    router = GPURouter(ports=ports)
 
     print(f"Processing job {job['job_id']}: {job['stats']['total']} requests")
     print(f"Progress: {job['stats']['completed']}/{job['stats']['total']} completed")
@@ -22,12 +23,12 @@ def process_batch_job(job, job_manager, gpus=None):
         return
 
     # Submit pending tasks to Celery
-    for task in pending_tasks:
+    for i, task in enumerate(pending_tasks):
         queue = router.get_best_queue(task.get("model", "default"))
 
         celery_app.send_task(
-            "inference_worker.process_request",
-            args=[job["job_id"], task],
+            "workers.inference_worker.process_request",
+            args=[job["job_id"], task, db_path, output_path],
             queue=queue,
             task_id=task["task_id"],
         )
@@ -43,27 +44,45 @@ def main():
     parser.add_argument("--output", required=True, help="Output directory")
     parser.add_argument("--job-id", help="Resume existing job")
     parser.add_argument(
-        "--batch-size", type=int, default=100, help="Batch size for processing"
+        "--batch-size", type=int, default=1, help="Batch size for processing"
     )
     parser.add_argument(
         "--max-retries", type=int, default=3, help="Max retries per task"
     )
     parser.add_argument(
-        "--gpu-ids", nargs="*", type=int, default=None, help="List of GPU IDs to use"
+        "--ports", nargs="*", type=int, default=None, help="List of GPU ports to use"
     )
 
     args = parser.parse_args()
 
     # Initialize job manager
-    job_manager = JobManager(args.output)
+    # Create db in the output directory if it doesn't exist
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+
+    db_path = os.path.join(args.output, "batch_jobs.db")
+    job_manager = JobManager(args.output, db_path=db_path)
 
     if args.job_id:
         # Resume existing job
         print(f"Resuming job: {args.job_id}")
         job = job_manager.load_job(args.job_id)
+    elif os.path.exists(os.path.join(args.output, "job_id.txt")):
+        # Load job ID from file
+        with open(os.path.join(args.output, "job_id.txt"), "r") as f:
+            job_id = f.read().strip()
+
+        print(f"Resuming job: {job_id}")
+        job = job_manager.load_job(job_id)
     else:
         # Create new job
         job_id = str(uuid.uuid4())
+
+        # write job_id to a file in the output directory
+        job_file = os.path.join(args.output, "job_id.txt")
+        with open(job_file, "w") as f:
+            f.write(job_id)
+
         print(f"Starting new job: {job_id}")
 
         # Load requests from input file
@@ -81,7 +100,7 @@ def main():
         )
 
     # Process the job
-    process_batch_job(job, job_manager, args.gpu_ids)
+    process_batch_job(job, job_manager, db_path, args.output, args.ports)
 
 
 if __name__ == "__main__":

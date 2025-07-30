@@ -3,9 +3,9 @@ from typing import Dict, List
 
 
 class GPURouter:
-    def __init__(self, gpus: List[str]):
+    def __init__(self, ports: List[str]):
         self.redis_client = redis.Redis(host="localhost", port=6379, db=0)
-        self.gpu_queues = [f"gpu_queue_{gpu}" for gpu in gpus]
+        self.gpu_queues = [f"gpu_queue_{str(port)}" for port in ports]
 
     def get_best_queue(self, model: str = "default") -> str:
         """Get best queue based on current load"""

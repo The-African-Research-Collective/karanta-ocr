@@ -73,7 +73,7 @@ class JobDatabase:
             # Insert tasks
             tasks_data = []
             for i, request in enumerate(requests):
-                task_id = f"{job_id}_{i:06d}"
+                task_id = request.get("custom_id", f"{job_id}_task_{i}")
                 tasks_data.append((task_id, job_id, json.dumps(request)))
 
             conn.executemany(

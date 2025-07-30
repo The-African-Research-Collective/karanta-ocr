@@ -25,7 +25,7 @@ class JobManager:
     def update_task_status(
         self, job_id: str, task_id: str, status: str, result=None, error=None
     ):
-        success = self.db.update_task_status(job_id, task_id, status, result, error)
+        success = self.db.update_task_status(job_id, task_id, status, None, error)
 
         # Save individual result file for completed tasks
         if success and status == "completed" and result is not None:
