@@ -11,56 +11,6 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def openai_response_format_schema() -> dict:
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "page_response",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "primary_language": {
-                        "type": ["string", "null"],
-                        "description": "The primary language of the text using two-letter codes or null if there is no text at all that you think you should read.",
-                    },
-                    "is_rotation_valid": {
-                        "type": "boolean",
-                        "description": "Is this page oriented correctly for reading? Answer only considering the textual content, do not factor in the rotation of any charts, tables, drawings, or figures.",
-                    },
-                    "rotation_correction": {
-                        "type": "integer",
-                        "description": "Indicates the degree of clockwise rotation needed if the page is not oriented correctly.",
-                        "enum": [0, 90, 180, 270],
-                        "default": 0,
-                    },
-                    "is_table": {
-                        "type": "boolean",
-                        "description": "Indicates if the majority of the page content is in tabular format.",
-                    },
-                    "is_diagram": {
-                        "type": "boolean",
-                        "description": "Indicates if the majority of the page content is a visual diagram.",
-                    },
-                    "natural_text": {
-                        "type": ["string", "null"],
-                        "description": "The natural text content extracted from the page.",
-                    },
-                },
-                "additionalProperties": False,
-                "required": [
-                    "primary_language",
-                    "is_rotation_valid",
-                    "rotation_correction",
-                    "is_table",
-                    "is_diagram",
-                    "natural_text",
-                ],
-            },
-            "strict": True,
-        },
-    }
-
-
 class VLLMClientError(Exception):
     """Custom exception for VLLM client errors"""
 
@@ -215,15 +165,11 @@ class VLLMClient:
         Generate text using VLLM server
 
         Args:
-            prompt: Input prompt for generation
+            messages: List of message dictionaries in OpenAI format
             model: Model name (if None, uses first available model)
             max_tokens: Maximum tokens to generate
             temperature: Sampling temperature
-            top_p: Top-p sampling parameter
-            frequency_penalty: Frequency penalty
-            presence_penalty: Presence penalty
-            stop: Stop sequences
-            stream: Whether to stream response
+            response_format: Optional response format schema
             **kwargs: Additional parameters passed to OpenAI API
 
         Returns:
@@ -436,7 +382,7 @@ class VLLMClientManager:
 
         except (ValueError, IndexError):
             raise VLLMClientError(
-                f"Invalid worker name format: {worker_name}. Expected format: worker_gpu_{{gpu_id}}_port_{{port}}_{{worker_index}}@hostname"
+                f"Invalid worker name format: {worker_name}. Expected format: worker_port_{{port}}_{{worker_index}}@hostname"
             )
 
 

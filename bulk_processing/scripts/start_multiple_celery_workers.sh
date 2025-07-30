@@ -495,7 +495,7 @@ EOF
         cat >> "$summary_file" << EOF
         {
             "vllm_port": $port,
-            "queue": "gpu_${port}_queue",
+            "queue": "gpu_queue_${port}",
             "workers": [
 EOF
         
@@ -574,7 +574,7 @@ main() {
     echo
     print_info "Queue configuration:"
     for port in "${PORT_ARRAY[@]}"; do
-        print_info "  VLLM port $port: queue 'gpu_${port}_queue' with $WORKERS_PER_PORT workers"
+        print_info "  VLLM port $port: queue 'gpu_queue_${port}' with $WORKERS_PER_PORT workers"
     done
 }
 
