@@ -1,0 +1,5 @@
+base_prompt: |
+  These are images from a document.
+  Please classify it into one of the provided categories.
+  Also return the primary language of the document based on the images
+  and your confidence in the classification (0-1).

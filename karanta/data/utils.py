@@ -2,13 +2,20 @@ import os
 import json
 import logging
 import time
-
+import io
+import base64
+from enum import Enum
+import asyncio
+import tempfile
 from typing import List, Optional, Union
 from pathlib import Path
+from typing import Set
 from functools import wraps
+from pydantic import BaseModel
 
-
-from pdf2image import convert_from_path
+import yaml
+from jinja2 import Template
+from pdf2image import convert_from_path, convert_from_bytes
 from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 from huggingface_hub import HfApi
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -16,6 +23,35 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
 
+class DocumentCategory(str, Enum):
+    RELIGIOUS = "religious"
+    NOVEL = "novel"
+    BROCHURE = "brochure"
+    NEWSPAPER = "newspaper"
+    TEXTBOOK = "textbook"
+    ACADEMIC = "academic"
+    WEBPAGE = "webpage"
+    OTHER = "other"
+
+class DocumentClassification(BaseModel):
+    category: DocumentCategory
+    language: str
+    confidence: float
+
+def convert_pdf2image(data_path: Path, output_dir: Path):
+    """
+    Convert PDF files to images using pdf2image.
+    """
+    return convert_from_path(data_path, output_folder=output_dir, last_page=3, fmt="jpg")
+
+def convert_pdf2image_from_bytes(pdf_file: bytes):
+    """Convert PDF files to images using pdf2image."""
+    return convert_from_bytes(pdf_file, last_page=3, fmt="jpg")
+
+def encode_image(pil_image):
+    buffer = io.BytesIO()
+    pil_image.save(buffer, format="JPEG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 def prepare_mixed_datasets(
     dataset_sources: Union[dict, list],
@@ -153,14 +189,6 @@ def push_folder_to_hub(folder: str, repo_id: str, branch: Optional[str] = None) 
         f"Pushed folder to https://huggingface.co/{repo_id}/tree/{branch or 'main'}"
     )
 
-
-def convert_pdf2image(data_path: Path, output_dir: Path):
-    """
-    Convert PDF files to images using pdf2image.
-    """
-    return convert_from_path(data_path, output_folder=output_dir)
-
-
 def timeit(func):
     @wraps(func)
     def timeit_wrapper(*args, **kwargs):
@@ -173,3 +201,153 @@ def timeit(func):
         return result
 
     return timeit_wrapper
+
+def process_pdf(pdf_input, pdf_name: str, model: str, prompt_template: dict) -> str:
+    """
+    Build TogetherAI JSONL request from PDF.
+    """
+    schema = DocumentClassification.model_json_schema()
+
+    base_prompt = prompt_template["base_prompt"]
+
+    # Build base JSON
+    base_data = {
+        "custom_id": pdf_name,
+        "body": {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": base_prompt}
+                    ]
+                }
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "schema": schema, 
+            },
+        }
+    }
+
+    # Convert PDF to images
+    images = convert_pdf2image_from_bytes(pdf_input)
+
+    # Encode up to 3 images
+    image_content = []
+    for image in images[:3]:
+        encoded_image = encode_image(image)
+        image_content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"}
+        })
+
+    # Attach images
+    base_data["body"]["messages"][0]["content"].extend(image_content)
+
+    return json.dumps(base_data)
+
+
+async def batch_call(client, batch_file_path: str):
+    """
+    Submits a JSONL file to TogetherAI's batch API and waits for completion.
+    Logs success or failure for each file in the batch.
+    """
+    try:
+        file_resp = client.files.upload(file=batch_file_path, purpose="batch-api")
+        batch = client.batches.create_batch(file_resp.id, endpoint="/v1/chat/completions")
+        base_name = os.path.splitext(batch_file_path)[0]
+        output_file = f"{base_name}_results.jsonl"
+
+        logger.info(f"Batch submitted: {batch_file_path}")
+
+        while True:
+            batch_status = client.batches.get_batch(batch.id)
+            if batch_status.status == "COMPLETED":
+                client.files.retrieve_content(id=batch_status.output_file_id, output=output_file)
+                logger.info(f"Batch completed: {batch_file_path} -> {output_file}")
+
+                # Parse results to log each document
+                with open(output_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            result = json.loads(line)
+                            file_name = result.get("custom_id", "unknown")
+                            logger.info(f"{file_name}: success")
+                        except json.JSONDecodeError:
+                            logger.error(f"Failed to parse result line in {output_file}")
+
+                break
+
+            elif batch_status.status == "FAILED":
+                client.files.retrieve_content(id=batch_status.error_file_id, output=output_file)
+                logger.error(f"Batch failed for {batch_file_path}: {batch_status.error}")
+                raise ValueError(f"Batch failed: {batch_status.error}")
+
+            await asyncio.sleep(10)  # async wait
+
+    except Exception as e:
+        logger.exception(f"Error submitting batch {batch_file_path}: {str(e)}")
+
+
+async def batch_submitter(client, completed_files_queue: asyncio.Queue):
+    """
+    Listens for completed JSONL files and submits them as batches.
+    """
+    submitted_files: Set[str] = set()
+
+    while True:
+        file_path = await completed_files_queue.get()
+        if file_path is None:  # Poison pill
+            break
+
+        if file_path in submitted_files:
+            continue
+
+        logger.info(f"Submitting {file_path} to TogetherAI batch API")
+        submitted_files.add(file_path)
+        await batch_call(client, file_path)
+        logger.info(f"Completed batch submission for {file_path}")
+
+
+async def jsonl_writer(queue: asyncio.Queue, completed_files_queue: asyncio.Queue, 
+                       base_output_name: str, max_file_size_mb: int = 100):
+    """
+    Consumes JSON lines from queue and writes to rotated JSONL files.
+    Notifies batch_submitter of completed files.
+    """
+    output_dir = Path("output")
+    output_dir.mkdir(exist_ok=True)
+
+    max_file_size = max_file_size_mb * 1024 * 1024
+    file_index = 1
+    current_file_size = 0
+    output_file = output_dir / f"{base_output_name}_{file_index}.jsonl"
+    f = open(output_file, "w", encoding="utf-8")
+    logger.info(f"Writing to {output_file}")
+
+    while True:
+        json_line = await queue.get()
+        if json_line is None:  # Poison pill
+            break
+
+        line_bytes = (json_line + "\n").encode("utf-8")
+        line_size = len(line_bytes)
+
+        # Rotate file if needed
+        if current_file_size + line_size > max_file_size:
+            f.close()
+            await completed_files_queue.put(str(output_file))  # Notify submitter
+
+            file_index += 1
+            output_file = output_dir / f"{base_output_name}_{file_index}.jsonl"
+            f = open(output_file, "w", encoding="utf-8")
+            logger.info(f"Rotating to {output_file}")
+            current_file_size = 0
+
+        f.write(json_line + "\n")
+        current_file_size += line_size
+
+    f.close()
+    await completed_files_queue.put(str(output_file))
+    logger.info(f"Completed writing {file_index} JSONL file(s).")
