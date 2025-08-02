@@ -163,3 +163,4 @@ cython_debug/
 #.idea/
 .DS_Store
 bulk_processing/celery_logs/*
+processing_progress.json
