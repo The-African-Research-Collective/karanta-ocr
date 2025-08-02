@@ -15,3 +15,5 @@ class Model(str, Enum):
     GPT_4_1_MINI = "gpt-4.1-mini-2025-04-14"
     GPT_4_O = "gpt-4o-2024-08-06"
     OLMO_7B_PREVIEW = "allenai/olmOCR-7B-0225-preview"
+    OLMO_7B_0725_FP8 = "allenai/olmOCR-7B-0725-FP8"
+    OLMO_7B_0725 = "allenai/olmOCR-7B-0725"

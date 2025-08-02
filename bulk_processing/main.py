@@ -8,7 +8,7 @@ from utils.gpu_router import GPURouter
 from workers.celery_app import celery_app
 
 
-def process_batch_job(job, job_manager, db_path, output_path, ports=None):
+def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=None):
     """Process batch job with failure recovery"""
     router = GPURouter(ports=ports)
 
@@ -28,7 +28,7 @@ def process_batch_job(job, job_manager, db_path, output_path, ports=None):
 
         celery_app.send_task(
             "workers.inference_worker.process_request",
-            args=[job["job_id"], task, db_path, output_path],
+            args=[job["job_id"], task, db_path, output_path, model_name],
             queue=queue,
             task_id=task["task_id"],
         )
@@ -51,6 +51,9 @@ def main():
     )
     parser.add_argument(
         "--ports", nargs="*", type=int, default=None, help="List of GPU ports to use"
+    )
+    parser.add_argument(
+        "--model-name", type=str, help="Model name to use for inference"
     )
 
     args = parser.parse_args()
@@ -100,7 +103,9 @@ def main():
         )
 
     # Process the job
-    process_batch_job(job, job_manager, db_path, args.output, args.ports)
+    process_batch_job(
+        job, job_manager, db_path, args.output, args.model_name, args.ports
+    )
 
 
 if __name__ == "__main__":

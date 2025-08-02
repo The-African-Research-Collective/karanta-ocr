@@ -32,7 +32,14 @@ def get_job_manager(output_dir, db_path) -> JobManager:
 
 
 @celery_app.task(bind=True, autoretry_for=(Exception,), retry_kwargs={"max_retries": 3})
-def process_request(self, job_id: str, task_data: dict, db_path, output_path):
+def process_request(
+    self,
+    job_id: str,
+    task_data: dict,
+    db_path: str,
+    output_path: str,
+    model_name: str = "default",
+):
     task_id = task_data["task_id"]
     request_data = task_data["request"]
 
@@ -51,10 +58,11 @@ def process_request(self, job_id: str, task_data: dict, db_path, output_path):
         logger.debug(f"Using VLLM client: {vllm_client}")
 
         # Make inference request
-
         result = vllm_client.generate(
             messages=request_data["messages"],
-            model=request_data.get("model", "default"),
+            model=request_data.get("model", "default")
+            if not model_name
+            else model_name,
             max_tokens=request_data.get("max_tokens", 6000),
             temperature=request_data.get("temperature", 0.1),
             response_format=request_data.get("response_format", None),
