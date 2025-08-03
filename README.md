@@ -21,8 +21,21 @@ This project is a extension of the [OlmoOCR](https://github.com/allenai/olmocr) 
 ...
 
 
-### Installation
-...
+## Setup
+
+Our repository uses uv environment to manage dependencies. To set up the environment, follow these steps:
+
+- Install uv by [following the instrictions here](https://docs.astral.sh/uv/getting-started/installation/)
+- Create a new uv environment and install the dependencies:
+  ```bash
+  uv venv
+  source .venv/bin/activate
+  ```
+- Install dependencies:
+  ```bash
+  uv sync
+  ```
+
 
 ## Team
 

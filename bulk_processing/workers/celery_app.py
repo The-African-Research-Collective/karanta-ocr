@@ -12,7 +12,6 @@ celery_app.config_from_object(
         "timezone": "UTC",
         "enable_utc": True,
         "task_routes": {
-            "inference_worker.process_request": {"queue": "default"},
             "worker.inference_worker.process_request": {"queue": "default"},
         },
         "worker_prefetch_multiplier": 1,

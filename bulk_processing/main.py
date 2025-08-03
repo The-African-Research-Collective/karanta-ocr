@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import os
 import uuid
+import time
 import argparse
 import jsonlines
+
 from utils.job_manager import JobManager
 from utils.gpu_router import GPURouter
 from workers.celery_app import celery_app
+from tqdm import tqdm
 
 
 def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=None):
@@ -23,7 +26,7 @@ def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=
         return
 
     # Submit pending tasks to Celery
-    for i, task in enumerate(pending_tasks):
+    for i, task in tqdm(enumerate(pending_tasks)):
         queue = router.get_best_queue(task.get("model", "default"))
 
         celery_app.send_task(
@@ -32,6 +35,9 @@ def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=
             queue=queue,
             task_id=task["task_id"],
         )
+
+        if (i + 1) % 50 == 0:
+            time.sleep(300)
 
     print(f"Submitted {len(pending_tasks)} tasks to queues")
     print("Monitor progress with: celery -A workers.celery_app flower")

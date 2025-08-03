@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Default values
 PORTS=""
-WORKERS_PER_PORT=3
+WORKERS_PER_PORT=2
 REDIS_HOST="localhost"
 REDIS_PORT=6379
 REDIS_PASSWORD=""

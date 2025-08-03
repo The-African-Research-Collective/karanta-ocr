@@ -43,5 +43,5 @@ class JobManager:
 
     def get_pending_tasks(self, job_id: str):
         job = self.load_job(job_id)
-        max_retries = job["config"].get("max_retries", 3)
+        max_retries = job["config"].get("max_retries", 10)
         return self.db.get_pending_tasks(job_id, max_retries)

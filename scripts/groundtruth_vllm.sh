@@ -7,9 +7,11 @@ PORT=$2
 PROCESSING_FILE=$3
 INPUT_DIR=$4
 OUTPUT_DIR=$5
+START_INDEX=$6
+END_INDEX=$7
 
 # Loop through numbers 1-10
-for i in {0..132}; do
+for i in $(seq $START_INDEX $END_INDEX); do
     echo "Processing batch $i..."
     
     python3 -m karanta.data.groundtruth.process_vllm_requests_distributed \
