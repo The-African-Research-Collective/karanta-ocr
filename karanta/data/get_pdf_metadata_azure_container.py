@@ -8,25 +8,23 @@ Sample usage:
 """
 
 import argparse
-import asyncio
-from asyncio import Semaphore
 import logging
 import os
 from pathlib import Path
 
-from azure.core.pipeline.transport import AioHttpTransport
-from azure.storage.blob.aio import ContainerClient
-
-
+from azure.storage.blob import ContainerClient
 from dotenv import load_dotenv
 from together import Together
 import yaml
 
-from karanta.data.utils import process_pdf, batch_submitter, jsonl_writer
+from karanta.data.utils import (
+    process_pdf_to_batch_line,
+    jsonl_writer,
+    batch_call,
+)
 
 log_dir = Path("logs")
 log_dir.mkdir(exist_ok=True)
-
 log_file = log_dir / "pdf_metadata.log"
 
 logging.basicConfig(
@@ -34,135 +32,118 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.FileHandler(log_file, encoding="utf-8"), logging.StreamHandler()],
 )
+logger = logging.getLogger(__name__)
 
 load_dotenv()
-transport = AioHttpTransport(read_timeout=600)
-
-############################ AZURE BLOB STORAGE CONFIGURATION ############################
 AZURE_ACCOUNT_NAME = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
 AZURE_SAS_TOKEN = os.getenv("AZURE_SAS_TOKEN")
-##########################################################################################
 
-client = Together(api_key=os.getenv("TOGETHERAI_API_KEY"))
 PROMPT_PATH = "configs/prompts/classification_batch_inference.yaml"
+client = Together(api_key=os.getenv("TOGETHERAI_API_KEY"))
 
 
 def parse_args():
+    """Parse command-line arguments.
+
+    Returns:
+        argparse.Namespace: Parsed arguments.
+    """
     parser = argparse.ArgumentParser(
-        description="Using TogetherAI's batch inference return information on the language contained in PDFs in a blob container."
+        description="Process PDFs from an Azure Blob container and submit to TogetherAI batch API for language classification."
     )
     parser.add_argument(
-        "--container_name",
-        help="Container name in Azure blob containing PDFs of interest",
+        "--container_name", required=True, help="Azure blob container name"
     )
     parser.add_argument(
-        "--output", default="output", help="Base output name to store output files"
+        "--output", default="output", help="Base output name for JSONL files"
     )
     parser.add_argument(
         "--model",
         default="meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
-        help="Preferred TogetherAI model for classification. See available models at https://docs.together.ai/docs/batch-inference#model-availability",
-    )
-    parser.add_argument(
-        "--max_concurrent_pdfs",
-        type=int,
-        default=1,
-        help="Maximum number of concurrent PDF processing tasks (default 1)",
+        help="TogetherAI model for classification",
     )
     return parser.parse_args()
 
 
-async def process_blob_pdf(
-    container: ContainerClient,
-    blob_name: str,
-    model: str,
-    prompt_template: dict,
-    sem: Semaphore,
-    queue: asyncio.Queue,
+def process_pdf_blob(
+    container: ContainerClient, blob_name: str, model: str, prompt_template: dict
+) -> str:
+    """Download and process a single PDF blob to a JSONL line suitable for batch inference.
+
+    Args:
+        container (ContainerClient): Azure Blob container client.
+        blob_name (str): Name of the PDF blob to process.
+        model (str): TogetherAI model name for classification.
+        prompt_template (dict): Prompt template for batch inference.
+
+    Returns:
+        str: JSONL-formatted line.
+    """
+    try:
+        blob_client = container.get_blob_client(blob_name)
+        pdf_file = blob_client.download_blob().readall()
+        json_line = process_pdf_to_batch_line(
+            pdf_file, blob_name, model, prompt_template
+        )
+        logger.info(f"Processed blob: {blob_name}")
+        return json_line
+    except Exception as e:
+        logger.error(f"Failed to process blob {blob_name}: {e}")
+        return None
+
+
+def classify_pdfs_in_container(
+    container_name: str, model: str, output: str, prompt_template: dict
 ):
-    async with sem:
-        try:
-            # Download PDF to memory
-            stream = await container.download_blob(blob_name)
-            pdf_file = await stream.readall()
+    """Process all PDF files in an Azure Blob container.
 
-            logging.info(f"Processing blob: {blob_name}")
+    Args:
+        container_name (str): Azure Blob container with PDF files.
+        model (str): TogetherAI model for batch inference.
+        output (str): Base name for JSONL output files.
+        prompt_template (dict): Prompt template for batch inference.
+    """
+    account_url = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net"
+    container = ContainerClient(account_url, container_name, credential=AZURE_SAS_TOKEN)
 
-            # Convert to JSONL line
-            json_line = process_pdf(pdf_file, blob_name, model, prompt_template)
+    logger.info(f"Listing blobs in container: {container_name}")
+    blob_list = container.list_blobs()
 
-            # Send line to writer queue
-            await queue.put(json_line)
-            logging.info(f"Successfully processed {blob_name}")
+    json_lines = []
+    count = 0
+    for blob in blob_list:
+        if blob.name.lower().endswith(".pdf"):
+            json_line = process_pdf_blob(container, blob.name, model, prompt_template)
+            if json_line:
+                json_lines.append(json_line)
+                count += 1
 
-        except Exception as e:
-            logging.error(f"Failed to process {blob_name}: {e}")
+    logger.info(f"Processed {count} PDF(s) from container {container_name}")
 
+    if not json_lines:
+        logger.warning("No PDF files processed. Exiting.")
+        return
 
-async def concurrent_stream_process(
-    container_name: str,
-    model: str,
-    max_concurrent_pdfs: int,
-    output: str,
-    prompt_template: dict,
-):
-    sem = Semaphore(max_concurrent_pdfs)
-    queue = asyncio.Queue()
-    completed_files_queue = asyncio.Queue()
+    completed_files = jsonl_writer(json_lines, output)
 
-    container = ContainerClient(
-        account_url=f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net",
-        container_name=container_name,
-        credential=AZURE_SAS_TOKEN,
-        transport=transport,
-    )
+    for file_path in completed_files:
+        batch_call(client, file_path)
 
-    writer_task = asyncio.create_task(
-        jsonl_writer(queue, completed_files_queue, output, 100)
-    )
-    submitter_task = asyncio.create_task(batch_submitter(client, completed_files_queue))
-
-    async with container:
-        tasks = []
-        async for blob in container.list_blobs():
-            if blob.name.lower().endswith(".pdf"):
-                tasks.append(
-                    asyncio.create_task(
-                        process_blob_pdf(
-                            container, blob.name, model, prompt_template, sem, queue
-                        )
-                    )
-                )
-
-        logging.info(f"Found {len(tasks)} PDF files in container {container_name}")
-
-        # Wait for all processing to finish
-        await asyncio.gather(*tasks)
-
-    # Signal writer to stop
-    await queue.put(None)
-    await writer_task
-
-    # Signal batch submitter to stop
-    await completed_files_queue.put(None)
-    await submitter_task
-
-    logging.info("All processing completed successfully.")
+    logger.info("All PDF processing and batch submissions complete.")
 
 
 def main():
+    """CLI entry point."""
     args = parse_args()
-    # Load Yaml template
+
     with open(PROMPT_PATH, "r") as f:
         template = yaml.safe_load(f)
-    asyncio.run(
-        concurrent_stream_process(
-            container_name=args.container_name,
-            model=args.model,
-            max_concurrent_pdfs=args.max_concurrent_pdfs,
-            output=args.output,
-            prompt_template=template,
-        )
+
+    classify_pdfs_in_container(
+        container_name=args.container_name,
+        model=args.model,
+        output=args.output,
+        prompt_template=template,
     )
 
 

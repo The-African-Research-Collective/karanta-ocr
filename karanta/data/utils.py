@@ -5,8 +5,7 @@ import time
 import io
 import base64
 from enum import Enum
-import asyncio
-from typing import List, Optional, Union, Set
+from typing import List, Optional, Union
 from pathlib import Path
 from functools import wraps
 from pydantic import BaseModel
@@ -68,6 +67,19 @@ def prepare_mixed_datasets(
 ) -> DatasetDict:
     """
     Prepare and mix datasets from multiple sources, controlling the size or percentage each dataset contributes.
+    Args:
+        dataset_sources (Union[dict, list]): Sources of datasets to mix. Can be a dictionary or list.
+            If a dictionary, keys are dataset sources, and values are fractions or counts to control contribution.
+            If a list, it alternates between dataset sources and their corresponding fractions or counts.
+        splits (Optional[List[str]]): Dataset splits to load and mix (e.g., "train", "test").
+        configs (Optional[List[str]]): Configurations for datasets, if applicable.
+        required_columns (Optional[List[str]]): Columns to retain in the final dataset.
+        shuffle_data (bool): Whether to shuffle the datasets.
+        save_dir (Optional[str]): Directory to save the mixed dataset.
+        ensure_columns (Optional[List[str]]): Columns that must exist in the dataset.
+        include_source_column (bool): Whether to include a column indicating the source of the data.
+    Returns:
+        DatasetDict: A dictionary containing the mixed datasets.
     """
     splits = splits or ["train", "test"]
     configs = configs or [None] * len(dataset_sources)
@@ -131,7 +143,14 @@ def prepare_mixed_datasets(
 def upload_metadata_to_hub(
     metadata: dict, filename: str, repo_id: str, repo_dir: str
 ) -> None:
-    """Upload metadata to the Hugging Face Hub."""
+    """
+    Upload metadata to the Hugging Face Hub.
+    Args:
+        metadata (dict): Metadata to upload.
+        filename (str): Name of the file to upload.
+        repo_id (str): Repository ID on the Hugging Face Hub.
+        repo_dir (str): Directory in the repository to save the file.
+    """
     with open("temp_metadata.json", "w") as f:
         json.dump(metadata, f)
     api = HfApi()
@@ -146,7 +165,13 @@ def upload_metadata_to_hub(
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(10))
 def push_folder_to_hub(folder: str, repo_id: str, branch: Optional[str] = None) -> None:
-    """Push a folder to the Hugging Face Hub."""
+    """
+    Push a folder to the Hugging Face Hub.
+    Args:
+        folder (str): Folder to push.
+        repo_id (str): Repository ID on the Hugging Face Hub.
+        branch (Optional[str]): Branch to push to.
+    """
     api = HfApi()
     if not api.repo_exists(repo_id):
         api.create_repo(repo_id, exist_ok=True)
@@ -176,8 +201,20 @@ def timeit(func):
     return timeit_wrapper
 
 
-def process_pdf(pdf_input, pdf_name: str, model: str, prompt_template: dict) -> str:
-    """Build TogetherAI JSONL request from PDF."""
+def process_pdf_to_batch_line(
+    pdf_input: bytes, pdf_name: str, model: str, prompt_template: dict
+) -> str:
+    """
+    Build TogetherAI JSONL request from PDF.
+
+    Args:
+        pdf_input (bytes): PDF file content as bytes.
+        pdf_name (str): Name of the PDF file.
+        model (str): TogetherAI model to use for classification.
+        prompt_template (dict): Prompt template containing the base prompt.
+    Returns:
+        str: JSONL-formatted string for batch submission.
+    """
     schema = DocumentClassification.model_json_schema()
     base_prompt = prompt_template["base_prompt"]
 
@@ -214,8 +251,16 @@ def process_pdf(pdf_input, pdf_name: str, model: str, prompt_template: dict) -> 
     return json.dumps(base_data)
 
 
-async def batch_call(client, batch_file_path: str):
-    """Submits a JSONL file to TogetherAI's batch API and waits for completion."""
+def batch_call(client, batch_file_path: str):
+    """
+    Submits a JSONL file to TogetherAI's batch API and waits for completion.
+    Args:
+        client: TogetherAI client instance.
+        batch_file_path (str): Path to the JSONL file containing batch requests.
+
+    Raises:
+        ValueError: If the batch submission fails.
+    """
     try:
         file_resp = client.files.upload(file=batch_file_path, purpose="batch-api")
         batch = client.batches.create_batch(
@@ -234,6 +279,7 @@ async def batch_call(client, batch_file_path: str):
                 )
                 logger.info(f"Batch completed: {batch_file_path} -> {output_file}")
 
+                # Log each document result
                 with open(output_file, "r", encoding="utf-8") as f:
                     for line in f:
                         try:
@@ -255,37 +301,23 @@ async def batch_call(client, batch_file_path: str):
                 )
                 raise ValueError(f"Batch failed: {batch_status.error}")
 
-            await asyncio.sleep(10)
-
+            time.sleep(10)  # Blocking wait
     except Exception as e:
         logger.exception(f"Error submitting batch {batch_file_path}: {str(e)}")
 
 
-async def batch_submitter(client, completed_files_queue: asyncio.Queue):
-    """Listens for completed JSONL files and submits them as batches."""
-    submitted_files: Set[str] = set()
+def jsonl_writer(json_lines, base_output_name: str, max_file_size_mb: int = 100):
+    """
+    Writes JSON lines to rotated JSONL files.
 
-    while True:
-        file_path = await completed_files_queue.get()
-        if file_path is None:
-            break
+    Args:
+        json_lines (list): List of JSON lines to write.
+        base_output_name (str): Base name for output files.
+        max_file_size_mb (int): Maximum size of each output file in MB.
+    Returns:
+        list: List of completed file paths.
+    """
 
-        if file_path in submitted_files:
-            continue
-
-        logger.info(f"Submitting {file_path} to TogetherAI batch API")
-        submitted_files.add(file_path)
-        await batch_call(client, file_path)
-        logger.info(f"Completed batch submission for {file_path}")
-
-
-async def jsonl_writer(
-    queue: asyncio.Queue,
-    completed_files_queue: asyncio.Queue,
-    base_output_name: str,
-    max_file_size_mb: int = 100,
-):
-    """Consumes JSON lines from queue and writes to rotated JSONL files."""
     output_dir = Path("output")
     output_dir.mkdir(exist_ok=True)
 
@@ -296,19 +328,19 @@ async def jsonl_writer(
     f = open(output_file, "w", encoding="utf-8")
     logger.info(f"Writing to {output_file}")
 
-    while True:
-        json_line = await queue.get()
+    completed_files = []
+
+    for json_line in json_lines:
         if json_line is None:
-            break
+            continue
 
         line_bytes = (json_line + "\n").encode("utf-8")
         line_size = len(line_bytes)
 
-        # Rotate file if needed
+        # Rotate if needed
         if current_file_size + line_size > max_file_size:
             f.close()
-            await completed_files_queue.put(str(output_file))
-
+            completed_files.append(str(output_file))
             file_index += 1
             output_file = output_dir / f"{base_output_name}_{file_index}.jsonl"
             f = open(output_file, "w", encoding="utf-8")
@@ -319,8 +351,9 @@ async def jsonl_writer(
         current_file_size += line_size
 
     f.close()
-    await completed_files_queue.put(str(output_file))
+    completed_files.append(str(output_file))
     logger.info(f"Completed writing {file_index} JSONL file(s).")
+    return completed_files
 
 
 def openai_response_format_schema() -> dict:
