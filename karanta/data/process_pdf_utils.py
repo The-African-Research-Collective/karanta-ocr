@@ -73,10 +73,3 @@ def render_pdf_to_base64png(
     )
     assert pdftoppm_result.returncode == 0, pdftoppm_result.stderr
     return base64.b64encode(pdftoppm_result.stdout).decode("utf-8")
-
-
-if __name__ == "__main__":
-    local_pdf_path = "/Users/odunayoogundepo/Downloads/Agbeyewo.pdf"
-    page_num = 1
-
-    print(render_pdf_to_base64png(local_pdf_path, page_num))
