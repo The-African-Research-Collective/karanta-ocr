@@ -1,5 +1,12 @@
 base_prompt: |
   These are images from a document.
-  Please classify it into one of the provided categories.
-  Also return the primary language of the document based on the images
-  and your confidence in the classification (0-1).
+  Classify the document into one of the following categories:
+    1. Fiction : Stories, novels, and other narrative works.
+    2. Non-Fiction : Informational, biographical, self-help, history, etc.
+    3. Academic & Reference : Textbooks, research papers, technical manuals, and study guides.
+    4. Religious : Scriptures, devotionals, religious magazines, or spiritual texts.
+    5. Magazines & Periodicals : Recurring non-newspaper publications like lifestyle, hobby, or professional magazines.
+    6. Newspapers : Daily or weekly news publications.
+
+  Also, detect the primary African language of the document based on its text (ISO 639-3 code)
+  and provide your confidence in the classification as a float between 0 and 1.
