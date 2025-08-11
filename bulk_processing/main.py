@@ -27,7 +27,9 @@ def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=
 
     # Submit pending tasks to Celery
     for i, task in tqdm(enumerate(pending_tasks)):
-        queue = router.get_best_queue(task.get("model", "default"))
+        queue = router.get_best_queue()
+
+        # print(f"Submitting task {task['task_id']} to queue: {queue}")
 
         celery_app.send_task(
             "workers.inference_worker.process_request",
@@ -36,7 +38,7 @@ def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=
             task_id=task["task_id"],
         )
 
-        if (i + 1) % 50 == 0:
+        if (i + 1) % 100 == 0:
             time.sleep(300)
 
     print(f"Submitted {len(pending_tasks)} tasks to queues")
