@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""
+Main script to handle bulk processing of requests with Celery and GPU routing.
+
+How to Use:
+    python3 main.py --input {file_containing_requests}  \
+            --output {output_directory_to_store_files} \
+            --ports {list of ports running vllm e.g. 8005 8006} \
+            --model-name allenai/olmOCR-7B-0725-FP8
+"""
+
 import os
 import uuid
 import time
@@ -9,6 +19,11 @@ from utils.job_manager import JobManager
 from utils.gpu_router import GPURouter
 from workers.celery_app import celery_app
 from tqdm import tqdm
+
+CELERY_BATCH_SIZE = (
+    100  # This is number of tasks to submit before pausing for few minutes
+)
+CELERY_PAUSE_TIME = 300  # Pause time in seconds
 
 
 def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=None):
@@ -29,8 +44,6 @@ def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=
     for i, task in tqdm(enumerate(pending_tasks)):
         queue = router.get_best_queue()
 
-        # print(f"Submitting task {task['task_id']} to queue: {queue}")
-
         celery_app.send_task(
             "workers.inference_worker.process_request",
             args=[job["job_id"], task, db_path, output_path, model_name],
@@ -38,8 +51,8 @@ def process_batch_job(job, job_manager, db_path, output_path, model_name, ports=
             task_id=task["task_id"],
         )
 
-        if (i + 1) % 100 == 0:
-            time.sleep(300)
+        if (i + 1) % CELERY_BATCH_SIZE == 0:
+            time.sleep(CELERY_PAUSE_TIME)
 
     print(f"Submitted {len(pending_tasks)} tasks to queues")
     print("Monitor progress with: celery -A workers.celery_app flower")
