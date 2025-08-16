@@ -1,0 +1,25 @@
+# Dataset configuration
+dataset:
+
+  train:
+    - name: dummy
+      root_dir: /Users/odunayoogundepo/Downloads/all_data/mock_training
+      pdf_dir_name: pdf_inputs
+      json_dir_name: json_outputs
+      pipeline: &basic_pipeline
+        - name: FrontMatterParser
+          front_matter_class: PageResponse
+        - name: PDFRenderer
+          target_longest_image_dim: 1288
+        - name: NewYamlFinetuningPromptWithNoAnchoring
+        - name: FrontMatterOutputFormat
+        - name: InstructUserMessages
+          prompt_first: true
+        - name: Tokenizer
+          masking_index: -100
+          end_of_message_token: "<|im_end|>"
+
+  eval:
+    - name: processed_00_documents_eval_s2pdf
+      root_dir: /data/olmOCR-mix-0225/processed_00_documents_eval_s2pdf/
+      pipeline: *basic_pipeline

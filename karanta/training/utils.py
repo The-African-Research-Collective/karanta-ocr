@@ -159,3 +159,20 @@ def clean_old_checkpoints(output_dir: str, keep_last_n: int) -> None:
     for checkpoint in checkpoints[:-keep_last_n]:
         shutil.rmtree(os.path.join(output_dir, checkpoint))
         logger.info(f"Removed checkpoint: {checkpoint}")
+
+
+def load_yaml_config(yaml_path: str) -> dict:
+    """
+    Load a YAML configuration file.
+
+    Args:
+        yaml_path (str): Path to the YAML file.
+
+    Returns:
+        dict: Parsed YAML configuration.
+    """
+    import yaml
+
+    with open(yaml_path, "r") as file:
+        config = yaml.safe_load(file)
+    return config
