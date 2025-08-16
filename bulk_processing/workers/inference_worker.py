@@ -312,6 +312,14 @@ def process_request(
         # Update status to processing (queued for batch update)
         batch_processor.queue_db_update(task_id, "processing")
 
+        # Checks if file already exists in output directory
+        result_file = job_manager.results_dir / f"{task_id}.json"
+        if result_file.exists():
+            logger.info(f"Task {task_id} already processed, skipping.")
+            # Update status to completed without reprocessing
+            batch_processor.queue_db_update(task_id, "completed")
+            return {"task_id": task_id, "status": "completed", "result": None}
+
         # Get VLLM client for this worker's port
         worker_name = current_task.request.hostname
         logger.debug(f"Worker name: {worker_name}")
