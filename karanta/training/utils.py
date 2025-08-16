@@ -1,9 +1,13 @@
 import os
 import sys
 import logging
-import dataclasses
-from dataclasses import dataclass
 import shutil
+import dataclasses
+
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from PIL import Image
 
 from typing import Optional, List, Any, Union, Tuple, NewType
 
@@ -13,6 +17,32 @@ from karanta.training.classification_args import ExperimentArguments
 
 DataClassType = NewType("DataClassType", Any)
 logger = logging.getLogger(__name__)
+
+
+class Langages(Enum):
+    """
+    Enum for the languages supported in the pipeline
+    languages are primarily African languages and some high resource languages
+    """
+
+    Yoruba = ["yo", "yor", "yoruba"]
+    Igbo = ["ig", "ibo", "igbo"]
+    Hausa = ["ha", "hau", "hausa"]
+    Swahili = ["sw", "swa", "swahili"]
+    Zulu = ["zu", "zul", "zulu"]
+    English = ["en", "eng", "english"]
+    French = ["fr", "fra", "french"]
+    Arabic = ["ar", "ara", "arabic"]
+    Spanish = ["es", "spa", "spanish"]
+    Portuguese = ["pt", "por", "portuguese"]
+    SouthernSotho = ["st", "sot", "sotho"]
+
+
+@dataclass(slots=True)
+class SingleDatapoint:
+    pdf_path: Path
+    json_path: Path
+    image: Optional[Image.Image] = None
 
 
 class ExtendedArgumentParser(HfArgumentParser):

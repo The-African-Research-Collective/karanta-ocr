@@ -1,50 +1,19 @@
-import logging
-
-from enum import Enum
 from pathlib import Path
-from dataclasses import dataclass
-from abc import ABC
-from concurrent.futures import ThreadPoolExecutor
-from typing import List, Optional, Tuple
-
+from typing import List, Optional, Tuple, Dict
 from torch.utils.data import Dataset
+from concurrent.futures import ThreadPoolExecutor
 
-from karanta.training.utils import load_yaml_config
+from karanta.training.utils import load_yaml_config, SingleDatapoint
+from karanta.training.pipeline_steps import BasePipelineStep, PDF2ImageStep
 
-logger = logging.getLogger(__name__)
-
-
-class Langages(Enum):
-    """
-    Enum for the languages supported in the pipeline
-    languages are primarily African languages and some high resource languages
-    """
-
-    Yoruba = ["yo", "yor", "yoruba"]
-    Igbo = ["ig", "ibo", "igbo"]
-    Hausa = ["ha", "hau", "hausa"]
-    Swahili = ["sw", "swa", "swahili"]
-    Zulu = ["zu", "zul", "zulu"]
-    English = ["en", "eng", "english"]
-    French = ["fr", "fra", "french"]
-    Arabic = ["ar", "ara", "arabic"]
-    Spanish = ["es", "spa", "spanish"]
-    Portuguese = ["pt", "por", "portuguese"]
-    SouthernSotho = ["st", "sot", "sotho"]
-
-
-@dataclass(frozen=True, slots=True)
-class BasePipelineStep(ABC):
-    """This is the base class for all the pipeline steps."""
-
-    def __call__(self, *args, **kwargs):
-        """Call the step with the given arguments."""
-        pass
+str2PipelineStep = {
+    "PDF2ImageStep": PDF2ImageStep,
+}
 
 
 def initialize_dataset(
     json_dir: Path, pdf_dir: Path, max_workers: Optional[int] = None
-) -> List[Tuple[Path, Path]]:
+) -> List[SingleDatapoint]:
     json_files = list(json_dir.glob("*.json"))
 
     def check_pdf_wrapper(json_file: Path) -> Optional[Tuple[str, Tuple[Path, Path]]]:
@@ -66,7 +35,10 @@ def initialize_dataset(
                 name, (pdf_path, json_path) = result
                 pdf_files[name] = (pdf_path, json_path)
 
-    return list(pdf_files.values())
+    return [
+        SingleDatapoint(pdf_path=pdf_path, json_path=json_path)
+        for pdf_path, json_path in pdf_files.values()
+    ]
 
 
 class LocalDataset(Dataset):
@@ -83,7 +55,7 @@ class LocalDataset(Dataset):
         root_dir: Path,
         pdf_dir_name: str = "pdf_inputs",
         json_dir_name: str = "json_outputs",
-        pipeline_steps: Optional[List[BasePipelineStep]] = None,
+        pipeline_steps: Optional[List[Dict]] = None,
     ):
         super().__init__()
 
@@ -91,20 +63,36 @@ class LocalDataset(Dataset):
         self.pdf_dir = root_dir / pdf_dir_name
         self.json_dir = root_dir / json_dir_name
 
-        self.dataset = initialize_dataset(self.json_dir, self.pdf_dir)
+        self.dataset: List[SingleDatapoint] = initialize_dataset(
+            self.json_dir, self.pdf_dir
+        )
+        self.pipeline = self._initialize_pipeline_steps(pipeline_steps)
 
-        self.pipeline_steps = pipeline_steps if pipeline_steps is not None else []
+    def _initialize_pipeline_steps(
+        self, pipeline_config: List[Dict]
+    ) -> List[BasePipelineStep]:
+        """
+        Initialize the pipeline steps from the configuration list.
+        """
+        pipeline = []
+        for step_config in pipeline_config:
+            name = step_config.pop("name")
+            step_class = str2PipelineStep.get(name)
+            step_instance = step_class(**step_config)
+            pipeline.append(step_instance)
+
+        return pipeline
 
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> SingleDatapoint:
         """
         Fetch a single item from the dataset by index
         """
         sample = self.dataset[idx]
 
-        for step in self.pipeline_steps:
+        for step in self.pipeline:
             sample = step(sample)
 
         return sample
@@ -112,13 +100,14 @@ class LocalDataset(Dataset):
 
 if __name__ == "__main__":
     config = load_yaml_config("configs/training/ocr/dummy.yaml")
-    print(config)
+    # print(config)
     config = config["dataset"]["train"][0]
+    pipeline = config["pipeline"]
     dataset = LocalDataset(
         root_dir=Path(config["root_dir"]),
         pdf_dir_name=config["pdf_dir_name"],
         json_dir_name=config["json_dir_name"],
-        pipeline_steps=None,
+        pipeline_steps=pipeline,
     )
 
     print(f"Dataset length: {len(dataset)}")
