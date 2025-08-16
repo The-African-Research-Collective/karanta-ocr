@@ -11,7 +11,9 @@ celery_app.config_from_object(
         "result_serializer": "json",
         "timezone": "UTC",
         "enable_utc": True,
-        "task_routes": {"inference_worker.process_request": {"queue": "default"}},
+        "task_routes": {
+            "worker.inference_worker.process_request": {"queue": "default"},
+        },
         "worker_prefetch_multiplier": 1,
         "task_acks_late": True,
         "worker_max_tasks_per_child": 100,
@@ -19,3 +21,4 @@ celery_app.config_from_object(
 )
 
 # Import tasks
+from workers.inference_worker import process_request  # unused import

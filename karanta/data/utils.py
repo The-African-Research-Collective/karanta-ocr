@@ -176,6 +176,11 @@ def timeit(func):
 
 
 def openai_response_format_schema() -> dict:
+    """
+    Returns the OpenAI response format schema for page analysis tasks.
+    This schema is used to validate the response format for tasks involving page analysis,
+    such as determining the primary language, rotation validity, and content type of a page.
+    """
     return {
         "type": "json_schema",
         "json_schema": {

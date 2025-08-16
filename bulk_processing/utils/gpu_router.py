@@ -7,7 +7,7 @@ class GPURouter:
         self.redis_client = redis.Redis(host="localhost", port=6379, db=0)
         self.gpu_queues = [f"gpu_queue_{str(port)}" for port in ports]
 
-    def get_best_queue(self, model: str = "default") -> str:
+    def get_best_queue(self) -> str:
         """Get best queue based on current load"""
 
         # Get queue lengths

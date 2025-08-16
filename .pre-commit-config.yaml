@@ -5,6 +5,7 @@ repos:
     rev: v0.9.8
     hooks:
       - id: ruff
+        exclude: bulk_processing/workers/celery_app.py
         name: ruff-lint
         args: [ --fix, --exit-non-zero-on-fix, --show-fixes, -v ]
 
