@@ -164,78 +164,172 @@ class InstructUserMessages(BasePipelineStep):
 
 @dataclass(frozen=True, slots=True)
 class Tokenizer(BasePipelineStep):
-    """Tokenizes messages and creates training labels with proper masking."""
+    """
+    Tokenizes document images and creates training labels for OCR (Optical Character Recognition) models.
+
+    This class is designed for training vision-language models that can extract and structure text
+    from document images. It processes document images along with user instructions and generates
+    structured output in formats like XML, JSON, or YAML.
+
+    The key insight for OCR training is that we want the model to:
+    1. See the full context (document image + extraction instruction + structured output)
+    2. Only be penalized for mistakes in generating the structured text output
+    3. Learn to convert visual document content into machine-readable structured formats
+
+    Attributes:
+        processor: The multimodal processor (e.g., AutoProcessor) that handles document images and text
+        masking_index: Value used to mask tokens that shouldn't contribute to loss (typically -100)
+        end_of_message_token: Token that marks the end of text extraction (defaults to Qwen format)
+    """
 
     processor: Any  # The model processor (e.g., AutoProcessor)
-    masking_index: int = -100
+    masking_index: int = (
+        -100
+    )  # Standard PyTorch value for ignoring tokens in loss calculation
     end_of_message_token: str = "<|im_end|>"  # Configurable, defaults to Qwen format
 
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
-        """Tokenize messages and create labels for training."""
+        """
+        Tokenize document images and create labels for OCR training.
 
+        This method transforms a training sample into the format needed by the OCR model:
+        - Processes document images with extraction instructions
+        - Creates proper attention masks
+        - Sets up labels with masking to only train on structured output generation
+
+        Args:
+            sample: A SingleDatapoint containing user_messages (document image + instruction)
+                   and response (structured text output in XML/JSON/YAML)
+
+        Returns:
+            The same sample with model_inputs populated with tokenized data
+        """
+
+        # === PROCESSOR INITIALIZATION ===
+        # Handle the case where processor might be passed as a string path
         if isinstance(self.processor, str):
             processor = AutoProcessor.from_pretrained(self.processor)
 
-        # Extract user message and response
-        user_messages = sample.user_messages
-        response = sample.response
+        # === DATA EXTRACTION ===
+        # Extract the core components of our OCR training sample
+        user_messages = (
+            sample.user_messages
+        )  # User's instruction + document image to process
+        response = (
+            sample.response
+        )  # Target structured output (XML/JSON/YAML) the model should learn to generate
 
-        # Apply chat template to user message only with generation prompt
-        # user_messages is a single dict, so wrap it in a list
+        # === CHAT TEMPLATE APPLICATION ===
+        # Convert user instruction into the model's expected format for document processing
+        # add_generation_prompt=True adds special tokens that signal "start extracting text here"
+        # tokenize=False keeps it as text for now (we'll tokenize everything together later)
         text = processor.apply_chat_template(
-            [user_messages], tokenize=False, add_generation_prompt=True
+            [user_messages],  # Wrap in list as expected by the template
+            tokenize=False,  # Keep as text, don't tokenize yet
+            add_generation_prompt=True,  # Add generation tokens depending on the model
         )
 
+        # === DOCUMENT IMAGE EXTRACTION ===
+        # Find the document image in the user's message content
+        # For OCR training, this will be a document image (PDF page)
+        # This assumes exactly one document image per training sample
         main_image = None
         for usg_msg in user_messages["content"]:
             if "image" in usg_msg:
-                main_image = usg_msg["image"]
+                main_image = usg_msg["image"]  # The document image to extract text from
                 break
 
-        assert main_image is not None
-
-        # Process inputs using processor
-        inputs = processor(
-            text=[text],
-            images=[main_image],
-            padding=True,
-            return_tensors="np",
+        # Ensure we found a document image (this OCR tokenizer expects document input)
+        assert main_image is not None, (
+            "Expected to find a document image in user messages"
         )
 
-        # Get labels by tokenizing the output text
+        # === INPUT TOKENIZATION ===
+        # Process both the extraction instruction and document image using the multimodal processor
+        # This creates:
+        # - input_ids: tokenized instruction text (e.g., "Extract text as JSON")
+        # - pixel_values: processed document image features (text regions, layout, etc.)
+        # - attention_mask: which tokens to pay attention to
+        inputs = processor(
+            text=[text],  # The formatted extraction instruction
+            images=[main_image],  # The document image to process
+            padding=True,  # Pad sequences to same length
+            return_tensors="np",  # Return NumPy arrays
+        )
+
+        # === STRUCTURED OUTPUT TOKENIZATION ===
+        # Tokenize the target structured text output (XML/JSON/YAML format)
+        # This is what the model should learn to generate from the document image
+        # Examples: JSON with extracted fields, XML with document structure, YAML with metadata
         labels = processor(text=[response], padding=True, return_tensors="np")
 
-        # Append end-of-message token to the labels
+        # === END-OF-EXTRACTION TOKEN HANDLING ===
+        # Add special token to mark where the model should stop generating structured output
+        # This helps the model know when it has completed the text extraction task
+        # add_special_tokens=False prevents adding extra BOS/EOS tokens
         end_tokens = processor.tokenizer(
             self.end_of_message_token, add_special_tokens=False
         )["input_ids"]
+
+        # Convert to same data type as other tokens for concatenation
         end_tokens = np.array(end_tokens, dtype=inputs.input_ids.dtype)
 
-        # Handle the case where labels['input_ids'] is empty
+        # === LABEL CONCATENATION WITH END TOKEN ===
+        # Handle edge case where structured output might be empty (rare for OCR tasks)
         if labels["input_ids"].shape[1] == 0:
             labels_input_ids_0 = np.array([], dtype=inputs.input_ids.dtype)
         else:
             labels_input_ids_0 = labels["input_ids"][0].astype(inputs.input_ids.dtype)
 
+        # Append end token to the structured output labels
         labels["input_ids"] = np.concatenate([labels_input_ids_0, end_tokens])
-        labels["input_ids"] = np.expand_dims(labels["input_ids"], axis=0)
+        labels["input_ids"] = np.expand_dims(
+            labels["input_ids"], axis=0
+        )  # Add batch dimension back
 
-        # Concatenate input_ids and labels
+        # === SEQUENCE CONSTRUCTION ===
+        # Create the full training sequence: [extraction_instruction] + [structured_output] + [end_token]
+        # The model will see this entire sequence but only be trained to generate the structured output part
+        # Example: "Extract as JSON" + document_image -> {"name": "John", "address": "123 Main St"} + <|im_end|>
         input_ids = np.concatenate([inputs.input_ids[0], labels.input_ids[0]], axis=0)
 
-        # All columns will participate in attention fully
+        # === ATTENTION MASK CREATION ===
+        # Create attention mask - all tokens participate in attention
+        # The model needs to attend to both the instruction and document image features
+        # to understand what type of extraction is requested and what content to extract
         attention_mask = np.ones_like(input_ids)
 
-        # Create labels, masking the input portion with -100
+        # === TRAINING LABEL CREATION (CRITICAL FOR OCR LEARNING) ===
+        # Create labels for training with proper masking:
+        # - Fill entire sequence with masking_index (-100) initially
+        # - Only the structured output portion gets actual token IDs as labels
+        # This ensures the model only learns to generate structured text output, not repeat the instruction
+        # The model learns: document_image + instruction -> structured_output
         labels_full = np.full_like(input_ids, fill_value=self.masking_index)
+
+        # Unmask only the structured output portion (everything after the instruction prompt)
+        # The model will be penalized only for mistakes in generating the XML/JSON/YAML output
         labels_full[len(inputs.input_ids[0]) :] = labels.input_ids[0]
 
-        # Return as dict, including pixel_values
-        sample.model_inputs["input_ids"] = input_ids
-        sample.model_inputs["attention_mask"] = attention_mask
-        sample.model_inputs["labels"] = labels_full
-        sample.model_inputs["pixel_values"] = inputs.pixel_values
+        # === OUTPUT ASSEMBLY ===
+        # Package all processed data into the format expected by the OCR model trainer
+        sample.model_inputs["input_ids"] = (
+            input_ids  # The full tokenized sequence (instruction + output)
+        )
+        sample.model_inputs["attention_mask"] = (
+            attention_mask  # Which tokens to attend to (all of them)
+        )
+        sample.model_inputs["labels"] = (
+            labels_full  # Training targets (masked for instruction portion)
+        )
+        sample.model_inputs["pixel_values"] = (
+            inputs.pixel_values
+        )  # Processed document image features
 
+        # === OPTIONAL DOCUMENT IMAGE METADATA ===
+        # Some models need additional image processing metadata for document understanding
+        # image_grid_thw typically contains height, width, and other document image dimensions
+        # This helps with layout understanding and text region detection
         if hasattr(inputs, "image_grid_thw"):
             sample.model_inputs["image_grid_thw"] = inputs.image_grid_thw[0]
 

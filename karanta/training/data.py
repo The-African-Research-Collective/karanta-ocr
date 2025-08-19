@@ -136,4 +136,4 @@ if __name__ == "__main__":
     )
 
     print(f"Dataset length: {len(dataset)}")
-    print(f"Dataset samples: {dataset[0].model_inputs}")
+    print(f"Dataset samples: {dataset[0].response}")
