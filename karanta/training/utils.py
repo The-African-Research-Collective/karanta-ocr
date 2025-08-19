@@ -4,7 +4,7 @@ import logging
 import shutil
 import dataclasses
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from PIL import Image
@@ -43,6 +43,12 @@ class SingleDatapoint:
     pdf_path: Path
     json_path: Path
     image: Optional[Image.Image] = None
+    response: Optional[str] = None
+    page_data: Optional[dict] = None
+    anchor_text: Optional[str] = None
+    instruction_prompt: Optional[str] = None
+    user_messages: Optional[str] = None
+    model_inputs: dict = field(default_factory=dict)
 
 
 class ExtendedArgumentParser(HfArgumentParser):

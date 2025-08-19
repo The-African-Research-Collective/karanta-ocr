@@ -9,6 +9,16 @@ dataset:
       pipeline: &basic_pipeline
         - name: PDF2ImageStep
           target_longest_image_dim: 1288
+        - name: FetchPageData
+        - name: StaticLengthDocumentAnchoring
+          target_anchor_text_len: 4000
+        - name: FinetuningPrompt
+          prompt_path: /Users/odunayoogundepo/Desktop/ocr_training/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
+        - name: JSONOutputFormat
+        - name: InstructUserMessages
+          prompt_first: true
+        - name: Tokenizer
+          processor: Qwen/Qwen2.5-VL-3B-Instruct
 
   eval:
     - name: processed_00_documents_eval_s2pdf

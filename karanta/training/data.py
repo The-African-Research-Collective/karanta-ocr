@@ -1,13 +1,30 @@
+import json
+
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 from torch.utils.data import Dataset
 from concurrent.futures import ThreadPoolExecutor
 
 from karanta.training.utils import load_yaml_config, SingleDatapoint
-from karanta.training.pipeline_steps import BasePipelineStep, PDF2ImageStep
+from karanta.training.pipeline_steps import (
+    BasePipelineStep,
+    PDF2ImageStep,
+    JSONOutputFormat,
+    FetchPageData,
+    StaticLengthDocumentAnchoring,
+    FinetuningPrompt,
+    InstructUserMessages,
+    Tokenizer,
+)
 
 str2PipelineStep = {
     "PDF2ImageStep": PDF2ImageStep,
+    "JSONOutputFormat": JSONOutputFormat,
+    "FetchPageData": FetchPageData,
+    "StaticLengthDocumentAnchoring": StaticLengthDocumentAnchoring,
+    "FinetuningPrompt": FinetuningPrompt,
+    "InstructUserMessages": InstructUserMessages,
+    "Tokenizer": Tokenizer,
 }
 
 
@@ -22,6 +39,14 @@ def initialize_dataset(
         """
         pdf_file = pdf_dir / f"{json_file.stem}.pdf"
         if pdf_file.exists():
+            # Check that json text loads successfully
+            try:
+                with open(json_file, "r", encoding="utf-8") as f:
+                    _ = json.loads(json.loads(f.read())["result"]["text"])
+            except (json.JSONDecodeError, KeyError):
+                print(f"Error reading JSON file: {json_file}")
+                return None
+
             return json_file.stem, (pdf_file, json_file)
         return None
 
@@ -111,4 +136,4 @@ if __name__ == "__main__":
     )
 
     print(f"Dataset length: {len(dataset)}")
-    print(f"Dataset samples: {dataset[0]}")
+    print(f"Dataset samples: {dataset[0].model_inputs}")
