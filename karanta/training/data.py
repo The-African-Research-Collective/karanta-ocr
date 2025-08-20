@@ -136,4 +136,14 @@ if __name__ == "__main__":
     )
 
     print(f"Dataset length: {len(dataset)}")
-    print(f"Dataset samples: {dataset[0].response}")
+    # print(f"Dataset samples: {dataset[0].user_messages}")
+
+    from transformers import AutoProcessor
+
+    processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+    text = processor.apply_chat_template(
+        [dataset[0].user_messages],  # Wrap in list as expected by the template
+        tokenize=False,  # Keep as text, don't tokenize yet
+        add_generation_prompt=True,  # Add generation tokens depending on the model
+    )
+    print(text)

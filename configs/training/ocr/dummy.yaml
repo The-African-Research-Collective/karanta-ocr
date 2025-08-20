@@ -1,26 +1,46 @@
+# Model Configuration
+model_name_or_path: "Qwen/Qwen2.5-VL-3B-Instruct"
+model_revision: main
+
 # Dataset configuration
-dataset:
+dataset_train:
+  - name: dummy
+    root_dir: /Users/odunayoogundepo/Downloads/all_data/mock_training
+    pdf_dir_name: pdf_inputs
+    json_dir_name: json_outputs
+    pipeline: &basic_pipeline
+      - name: PDF2ImageStep
+        target_longest_image_dim: 1288
+      - name: FetchPageData
+      - name: StaticLengthDocumentAnchoring
+        target_anchor_text_len: 4000
+      - name: FinetuningPrompt
+        prompt_path: /Users/odunayoogundepo/Desktop/ocr_training/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
+      - name: JSONOutputFormat
+      - name: InstructUserMessages
+        prompt_first: true
+      - name: Tokenizer
+        processor: "{{ model_name_or_path }}"
 
-  train:
-    - name: dummy
-      root_dir: /Users/odunayoogundepo/Downloads/all_data/mock_training
-      pdf_dir_name: pdf_inputs
-      json_dir_name: json_outputs
-      pipeline: &basic_pipeline
-        - name: PDF2ImageStep
-          target_longest_image_dim: 1288
-        - name: FetchPageData
-        - name: StaticLengthDocumentAnchoring
-          target_anchor_text_len: 4000
-        - name: FinetuningPrompt
-          prompt_path: /Users/odunayoogundepo/Desktop/ocr_training/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
-        - name: JSONOutputFormat
-        - name: InstructUserMessages
-          prompt_first: true
-        - name: Tokenizer
-          processor: Qwen/Qwen2.5-VL-3B-Instruct
+dataset_eval:
+  - name: dummy
+    root_dir: /Users/odunayoogundepo/Downloads/all_data/mock_training
+    pipeline: *basic_pipeline
 
-  eval:
-    - name: processed_00_documents_eval_s2pdf
-      root_dir: /data/olmOCR-mix-0225/processed_00_documents_eval_s2pdf/
-      pipeline: *basic_pipeline
+# Expertiment Configuration
+exp_name: dummy
+seed: 42
+report_to:
+  - wandb
+gradient_accumulation_steps: 4
+use_flash_attention: True
+output_dir: /Users/odunayoogundepo/Desktop/ocr_training/karanta-ocr/runs
+per_device_train_batch_size: 1
+push_to_hub: true
+hf_entity: taresco
+reduce_loss: sum
+report_to: wandb
+wandb_project_name: karanta
+wandb_entity: african-research-collective
+logging_steps: 1
+checkpointing_steps: epoch
