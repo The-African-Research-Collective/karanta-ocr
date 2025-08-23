@@ -8,7 +8,7 @@ dataset_train:
     root_dir: /Users/odunayoogundepo/Downloads/all_data/mock_training
     pdf_dir_name: pdf_inputs
     json_dir_name: json_outputs
-    pipeline: &basic_pipeline
+    pipeline:
       - name: PDF2ImageStep
         target_longest_image_dim: 1288
       - name: FetchPageData
@@ -20,12 +20,30 @@ dataset_train:
       - name: InstructUserMessages
         prompt_first: true
       - name: Tokenizer
-        processor: "{{ model_name_or_path }}"
+        processor: "Qwen/Qwen2.5-VL-3B-Instruct"
+        max_length: 8192
 
 dataset_eval:
   - name: dummy
     root_dir: /Users/odunayoogundepo/Downloads/all_data/mock_training
-    pipeline: *basic_pipeline
+    pdf_dir_name: pdf_inputs
+    json_dir_name: json_outputs
+    pipeline:
+      - name: PDF2ImageStep
+        target_longest_image_dim: 1288
+      - name: FetchPageData
+      - name: StaticLengthDocumentAnchoring
+        target_anchor_text_len: 4000
+      - name: FinetuningPrompt
+        prompt_path: /Users/odunayoogundepo/Desktop/ocr_training/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
+      - name: JSONOutputFormat
+      - name: InstructUserMessages
+        prompt_first: true
+      - name: Tokenizer
+        processor: "Qwen/Qwen2.5-VL-3B-Instruct"
+        max_length: 8192
+dataloader_num_workers: 1
+max_length: 8192
 
 # Expertiment Configuration
 exp_name: dummy

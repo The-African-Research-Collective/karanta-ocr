@@ -10,7 +10,6 @@ from jinja2 import Template
 
 from PIL import Image
 from io import BytesIO
-from transformers import AutoProcessor
 from typing import Any
 
 from karanta.training.utils import SingleDatapoint
@@ -37,7 +36,6 @@ class PDF2ImageStep(BasePipelineStep):
 
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
         """Render PDF to image."""
-        print(sample)
         # # Render PDF to image
         base64_png = render_pdf_to_base64png(
             str(sample.pdf_path),
@@ -183,10 +181,35 @@ class Tokenizer(BasePipelineStep):
     """
 
     processor: Any  # The model processor (e.g., AutoProcessor)
+    max_length: int
     masking_index: int = (
         -100
     )  # Standard PyTorch value for ignoring tokens in loss calculation
     end_of_message_token: str = "<|im_end|>"  # Configurable, defaults to Qwen format
+
+    def _pad_sequence(self, sequence: np.ndarray, pad_value: int) -> np.ndarray:
+        """
+        Pad a sequence to the specified maximum length.
+
+        Args:
+            sequence: The sequence to pad
+            max_length: Target length after padding
+            pad_value: Value to use for padding
+
+        Returns:
+            Padded sequence
+        """
+        if len(sequence) < self.max_length:
+            extra_length = self.max_length - len(sequence)
+            padding = np.full((extra_length,), pad_value, dtype=sequence.dtype)
+
+            if self.processor.tokenizer.padding_side == "right":
+                return np.concatenate([sequence, padding])
+            else:
+                return np.concatenate([padding, sequence])
+
+        elif len(sequence) > self.max_length:
+            return sequence[: self.max_length]
 
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
         """
@@ -205,11 +228,6 @@ class Tokenizer(BasePipelineStep):
             The same sample with model_inputs populated with tokenized data
         """
 
-        # === PROCESSOR INITIALIZATION ===
-        # Handle the case where processor might be passed as a string path
-        if isinstance(self.processor, str):
-            processor = AutoProcessor.from_pretrained(self.processor)
-
         # === DATA EXTRACTION ===
         # Extract the core components of our OCR training sample
         user_messages = (
@@ -223,7 +241,7 @@ class Tokenizer(BasePipelineStep):
         # Convert user instruction into the model's expected format for document processing
         # add_generation_prompt=True adds special tokens that signal "start extracting text here"
         # tokenize=False keeps it as text for now (we'll tokenize everything together later)
-        text = processor.apply_chat_template(
+        text = self.processor.apply_chat_template(
             [user_messages],  # Wrap in list as expected by the template
             tokenize=False,  # Keep as text, don't tokenize yet
             add_generation_prompt=True,  # Add generation tokens depending on the model
@@ -250,7 +268,7 @@ class Tokenizer(BasePipelineStep):
         # - input_ids: tokenized instruction text (e.g., "Extract text as JSON")
         # - pixel_values: processed document image features (text regions, layout, etc.)
         # - attention_mask: which tokens to pay attention to
-        inputs = processor(
+        inputs = self.processor(
             text=[text],  # The formatted extraction instruction
             images=[main_image],  # The document image to process
             padding=True,  # Pad sequences to same length
@@ -261,13 +279,13 @@ class Tokenizer(BasePipelineStep):
         # Tokenize the target structured text output (XML/JSON/YAML format)
         # This is what the model should learn to generate from the document image
         # Examples: JSON with extracted fields, XML with document structure, YAML with metadata
-        labels = processor(text=[response], padding=True, return_tensors="np")
+        labels = self.processor(text=[response], padding=True, return_tensors="np")
 
         # === END-OF-EXTRACTION TOKEN HANDLING ===
         # Add special token to mark where the model should stop generating structured output
         # This helps the model know when it has completed the text extraction task
         # add_special_tokens=False prevents adding extra BOS/EOS tokens
-        end_tokens = processor.tokenizer(
+        end_tokens = self.processor.tokenizer(
             self.end_of_message_token, add_special_tokens=False
         )["input_ids"]
 
@@ -311,7 +329,16 @@ class Tokenizer(BasePipelineStep):
         # The model will be penalized only for mistakes in generating the XML/JSON/YAML output
         labels_full[len(inputs.input_ids[0]) :] = labels.input_ids[0]
 
-        # === OUTPUT ASSEMBLY ===
+        # === LABEL PADDING ===
+        # Pad labels to the maximum length expected by the model
+
+        input_ids = self._pad_sequence(
+            input_ids, pad_value=self.processor.tokenizer.pad_token_id
+        )
+        attention_mask = self._pad_sequence(attention_mask, pad_value=0)
+        labels_full = self._pad_sequence(labels_full, pad_value=self.masking_index)
+
+        # === OUTPUT ASSEMBLY ====
         # Package all processed data into the format expected by the OCR model trainer
         sample.model_inputs["input_ids"] = (
             input_ids  # The full tokenized sequence (instruction + output)

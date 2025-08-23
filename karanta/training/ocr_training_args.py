@@ -160,3 +160,14 @@ class ModelArguments:
 class DatasetArguments:
     dataset_eval: List[Dict[str, Any]] = field(default_factory=list)
     dataset_train: List[Dict[str, Any]] = field(default_factory=list)
+    dataloader_num_workers: int = field(
+        default=4,
+        metadata={"help": "The number of workers to use for data loading."},
+    )
+    max_length: Optional[int] = field(
+        default=8192,
+        metadata={
+            "help": "The maximum sequence length for the model. "
+            "Sequences will be truncated to this length."
+        },
+    )

@@ -1,8 +1,11 @@
 import json
+import torch
+import numpy as np
 
 from pathlib import Path
+from transformers import AutoProcessor
 from typing import List, Optional, Tuple, Dict
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from concurrent.futures import ThreadPoolExecutor
 
 from karanta.training.utils import load_yaml_config, SingleDatapoint
@@ -102,8 +105,15 @@ class LocalDataset(Dataset):
         pipeline = []
         for step_config in pipeline_config:
             name = step_config.pop("name")
-            step_class = str2PipelineStep.get(name)
-            step_instance = step_class(**step_config)
+
+            if name == "Tokenizer":
+                processor = step_config.pop("processor", None)
+                processor = AutoProcessor.from_pretrained(processor)
+                step_class = str2PipelineStep.get(name)
+                step_instance = step_class(**step_config, processor=processor)
+            else:
+                step_class = str2PipelineStep.get(name)
+                step_instance = step_class(**step_config)
             pipeline.append(step_instance)
 
         return pipeline
@@ -120,13 +130,87 @@ class LocalDataset(Dataset):
         for step in self.pipeline:
             sample = step(sample)
 
-        return sample
+        return sample.model_inputs
+
+
+class DataCollator:
+    """
+    The data collator is used to prepare a batch of data for training.
+    This data collator accepts a list of Dicts, each representing a sample,
+    and processes them according to the pipeline steps defined in the dataset.
+    """
+
+    def __init__(self, max_token_len: Optional[int] = None):
+        self.max_token_len = max_token_len
+
+    def __call__(self, batch: List[Dict]) -> Dict:
+        input_ids = []
+        attention_mask = []
+        labels = []
+        pixel_values = []
+        image_grid_thw = []
+
+        for sample in batch:
+            if sample:
+                sample_input_ids = sample["input_ids"]
+                sample_attention_mask = sample["attention_mask"]
+                sample_labels = sample["labels"]
+
+                if isinstance(sample_input_ids, np.ndarray):
+                    input_ids_tensor = torch.from_numpy(sample_input_ids)
+                elif isinstance(sample_input_ids, torch.Tensor):
+                    input_ids_tensor = sample_input_ids
+                else:
+                    input_ids_tensor = torch.tensor(sample_input_ids)
+
+                input_ids.append(input_ids_tensor[: self.max_token_len])
+
+                if isinstance(sample_attention_mask, np.ndarray):
+                    attention_mask_tensor = torch.from_numpy(sample_attention_mask)
+                elif isinstance(sample_attention_mask, torch.Tensor):
+                    attention_mask_tensor = sample_attention_mask
+                else:
+                    attention_mask_tensor = torch.tensor(sample_attention_mask)
+
+                attention_mask.append(attention_mask_tensor[: self.max_token_len])
+
+                if isinstance(sample_labels, np.ndarray):
+                    labels_tensor = torch.from_numpy(sample_labels)
+                elif isinstance(sample_labels, torch.Tensor):
+                    labels_tensor = sample_labels
+                else:
+                    labels_tensor = torch.tensor(sample_labels)
+
+                labels.append(labels_tensor[: self.max_token_len])
+
+                # Handle pixel_values which might be numpy array or already a tensor
+                sample_pixel_values = sample["pixel_values"]
+                if isinstance(sample_pixel_values, np.ndarray):
+                    sample_pixel_values = torch.from_numpy(sample_pixel_values)
+                pixel_values.append(sample_pixel_values)
+
+                # Handle image_grid_thw
+                sample_image_grid_thw = sample["image_grid_thw"]
+                if isinstance(sample_image_grid_thw, np.ndarray):
+                    sample_image_grid_thw = torch.from_numpy(sample_image_grid_thw)
+                image_grid_thw.append(sample_image_grid_thw)
+
+        if not input_ids:
+            return
+
+        return {
+            "input_ids": torch.stack(input_ids),
+            "attention_mask": torch.stack(attention_mask),
+            "labels": torch.stack(labels),
+            "pixel_values": torch.stack(pixel_values),
+            "image_grid_thw": torch.stack(image_grid_thw),
+        }
 
 
 if __name__ == "__main__":
-    config = load_yaml_config("configs/training/ocr/dummy.yaml")
-    # print(config)
-    config = config["dataset"]["train"][0]
+    all_config = load_yaml_config("configs/training/ocr/dummy.yaml")
+    print(all_config)
+    config = all_config["dataset_train"][0]
     pipeline = config["pipeline"]
     dataset = LocalDataset(
         root_dir=Path(config["root_dir"]),
@@ -135,15 +219,43 @@ if __name__ == "__main__":
         pipeline_steps=pipeline,
     )
 
-    print(f"Dataset length: {len(dataset)}")
-    # print(f"Dataset samples: {dataset[0].user_messages}")
-
     from transformers import AutoProcessor
 
+    # torch.set_printoptions(threshold=10_000)
+    # numpy.set_printoptions(threshold=10_000)
+
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
-    text = processor.apply_chat_template(
-        [dataset[0].user_messages],  # Wrap in list as expected by the template
-        tokenize=False,  # Keep as text, don't tokenize yet
-        add_generation_prompt=True,  # Add generation tokens depending on the model
+
+    # print(
+    #     processor(text = ["I am the prince of wales"], return_tensors="np",padding="max_length", max_length=200, )
+    # )
+
+    # print(dataset[0]['input_ids'])
+    # print(dataset[0]['input_ids'].shape)
+    # print(processor.tokenizer.pad_token_id)
+    # print(processor.tokenizer.padding_side)
+
+    # print(processor.tokenizer.pad_token_id in dataset[0]['input_ids'])
+
+    # print(f"Dataset length: {len(dataset)}")
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=2,
+        collate_fn=DataCollator(max_token_len=all_config["max_length"]),
+        num_workers=all_config["dataloader_num_workers"],
     )
-    print(text)
+
+    print(next(iter(dataloader)))
+
+    # print(f"Dataset samples: {dataset[0].user_messages}")
+
+    # from transformers import AutoProcessor
+
+    # processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+    # text = processor.apply_chat_template(
+    #     [dataset[0].user_messages],  # Wrap in list as expected by the template
+    #     tokenize=False,  # Keep as text, don't tokenize yet
+    #     add_generation_prompt=True,  # Add generation tokens depending on the model
+    # )
+    # print(text)
