@@ -144,13 +144,6 @@ class ExperimentArguments:
         default=0.0,
         metadata={"help": "Weight decay for AdamW if we apply some."},
     )
-    timeout: int = field(
-        default=1800,
-        metadata={
-            "help": "Timeout for the training process in seconds."
-            "Useful if tokenization process is long. Default is 1800 seconds (30 minutes)."
-        },
-    )
     learning_rate: float = field(
         default=5e-5,
         metadata={"help": "The initial learning rate for AdamW."},
