@@ -121,10 +121,6 @@ class ExperimentArguments:
             ],
         },
     )
-    num_train_epochs: int = field(
-        default=2,
-        metadata={"help": "Total number of training epochs to perform."},
-    )
     report_to: Union[str, List[str]] = field(
         default="all",
         metadata={
