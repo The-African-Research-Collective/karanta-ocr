@@ -45,7 +45,7 @@ dataset_eval:
 dataloader_num_workers: 1
 max_length: 8192
 
-# Expertiment Configuration
+# Experiment Configuration
 exp_name: dummy
 seed: 42
 report_to:
