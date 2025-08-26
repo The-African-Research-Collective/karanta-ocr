@@ -18,7 +18,7 @@ DataClassType = NewType("DataClassType", Any)
 logger = logging.getLogger(__name__)
 
 
-class Langages(Enum):
+class Languages(Enum):
     """
     Enum for the languages supported in the pipeline
     languages are primarily African languages and some high resource languages
