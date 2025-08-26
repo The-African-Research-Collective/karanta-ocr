@@ -148,6 +148,7 @@ class ExperimentArguments:
         default=5e-5,
         metadata={"help": "The initial learning rate for AdamW."},
     )
+    max_train_steps: int = field(default=None)
 
 
 @dataclass
