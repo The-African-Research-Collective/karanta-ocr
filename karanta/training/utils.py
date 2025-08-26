@@ -277,3 +277,26 @@ def load_yaml_config(yaml_path: str) -> dict:
     with open(yaml_path, "r") as file:
         config = yaml.safe_load(file)
     return config
+
+
+def get_last_checkpoint_path(args, incomplete: bool = False) -> str:
+    # if output already exists and user does not allow overwriting, resume from there.
+    # otherwise, resume if the user specifies a checkpoint.
+    # else, start from scratch.
+    # if incomplete is true, include folders without "COMPLETE" in the folder.
+    last_checkpoint_path = None
+    if (
+        args.output_dir
+        and os.path.isdir(args.output_dir)
+        and not args.overwrite_output_dir
+    ):
+        last_checkpoint_path = get_last_checkpoint(
+            args.output_dir, incomplete=incomplete
+        )
+        if last_checkpoint_path is None:
+            logger.warning(
+                "Output directory exists but no checkpoint found. Starting from scratch."
+            )
+    elif args.resume_from_checkpoint:
+        last_checkpoint_path = args.resume_from_checkpoint
+    return last_checkpoint_path
