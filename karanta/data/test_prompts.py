@@ -13,11 +13,14 @@ import argparse
 
 from jinja2 import Template
 from openai import OpenAI
+from dotenv import load_dotenv
 
-from karanta.data.preprocessing.process_pdf_utils import render_pdf_to_base64png
+from karanta.data.process_pdf_utils import render_pdf_to_base64png
 from karanta.prompts.anchor import get_anchor_text
 from karanta.data.utils import openai_response_format_schema
 from karanta.constants import TARGET_IMAGE_DIM, PROMPT_PATH, Model
+
+load_dotenv()
 
 
 def test_build_page_query_openai(
