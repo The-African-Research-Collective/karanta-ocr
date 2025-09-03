@@ -131,9 +131,7 @@ def test_build_page_query_openai(
         top_logprobs=5,
         response_format=openai_response_format_schema(),
     )
-    print(
-        f"Response: {response.choices[0].message.content}\n========================================================================"
-    )
+    print(f"Response: {response.choices[0].message.content}\n===========")
     print(
         f"Generated Natural Text: {json.loads(response.choices[0].message.content)['natural_text']}"
     )
@@ -189,9 +187,7 @@ def test_build_page_query_vllm_olmoocr(
         response_format=openai_response_format_schema(),
     )
 
-    print(
-        f"Response: {response.choices[0].message.content}\n========================================================================"
-    )
+    print(f"Response: {response.choices[0].message.content}\n==================")
     print(
         f"Generated Natural Text: {json.loads(response.choices[0].message.content)['natural_text']}"
     )
