@@ -48,7 +48,7 @@ async def test_build_page_query_azure(
     client = AzureOPENAILLM("gpt-4o")
 
     print(
-        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}\n======================"
+        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}\n======="
     )
 
     prompt = [
