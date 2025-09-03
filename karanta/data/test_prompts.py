@@ -19,8 +19,64 @@ from karanta.data.process_pdf_utils import render_pdf_to_base64png
 from karanta.prompts.anchor import get_anchor_text
 from karanta.data.utils import openai_response_format_schema
 from karanta.constants import TARGET_IMAGE_DIM, PROMPT_PATH, Model
+from karanta.llm_clients.azure_client import AzureOPENAILLM
 
 load_dotenv()
+
+
+async def test_build_page_query_azure(
+    local_pdf_path: str, page: int, model_name: str
+) -> dict:
+    image_base64 = render_pdf_to_base64png(local_pdf_path, page, TARGET_IMAGE_DIM)
+    anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
+
+    image_page = True
+
+    if len(anchor_text.split("\n")) > 10:
+        image_page = False
+
+    with open(PROMPT_PATH, "r") as stream:
+        prompt_template_dict = yaml.safe_load(stream)
+
+        if image_page:
+            prompt_template_dict["system"] = Template(
+                prompt_template_dict["newspaper_system"]
+            )
+        else:
+            prompt_template_dict["system"] = Template(prompt_template_dict["system"])
+
+    client = AzureOPENAILLM("gpt-4o")
+
+    print(
+        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}\n======="
+    )
+
+    prompt = [
+        [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": prompt_template_dict["system"].render(
+                            {"base_text": anchor_text}
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                    },
+                ],
+            }
+        ]
+    ]
+
+    response = await client.completion(
+        prompt, openai_response_format_schema(), temperature=0.1, max_tokens=6000
+    )
+
+    print(f"Response: {response[0].generation}\n======================")
+    print(f"Generated Natural Text: {response[0].generation['natural_text']}")
 
 
 def test_build_page_query_openai(
@@ -47,7 +103,7 @@ def test_build_page_query_openai(
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     print(
-        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}\n========================================================================"
+        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}\n======================"
     )
 
     response = client.chat.completions.create(
@@ -75,9 +131,7 @@ def test_build_page_query_openai(
         top_logprobs=5,
         response_format=openai_response_format_schema(),
     )
-    print(
-        f"Response: {response.choices[0].message.content}\n========================================================================"
-    )
+    print(f"Response: {response.choices[0].message.content}\n===========")
     print(
         f"Generated Natural Text: {json.loads(response.choices[0].message.content)['natural_text']}"
     )
@@ -133,9 +187,7 @@ def test_build_page_query_vllm_olmoocr(
         response_format=openai_response_format_schema(),
     )
 
-    print(
-        f"Response: {response.choices[0].message.content}\n========================================================================"
-    )
+    print(f"Response: {response.choices[0].message.content}\n==================")
     print(
         f"Generated Natural Text: {json.loads(response.choices[0].message.content)['natural_text']}"
     )
@@ -156,7 +208,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--inference_type",
-        choices=["openai", "olmoocr"],
+        choices=["openai", "olmoocr", "azure"],
         required=True,
         help="Type of inference to perform: 'openai' for OpenAI models or 'olmoocr' for OlmoOCR.",
     )
@@ -193,4 +245,14 @@ if __name__ == "__main__":
             page=args.page_num,
             model_name=args.model_name,
             host=args.host,
+        )
+    elif args.inference_type == "azure":
+        import asyncio
+
+        asyncio.run(
+            test_build_page_query_azure(
+                local_pdf_path=args.local_pdf_path,
+                page=args.page_num,
+                model_name=args.model_name,
+            )
         )
