@@ -15,7 +15,7 @@ from tenacity import (
     wait_fixed,
 )
 
-from post_training.llms.base import (
+from karanta.llm_clients.base import (
     BaseLLM,
     ModelCompletion,
     Generation_Models,
@@ -155,8 +155,8 @@ class AzureOldDeployments(AzureOPENAILLM):
 
 
 async def _test():
-    model = AzureOPENAILLM()
-    prompt = [{"message": "Hello, how are you?", "role": "user"}]
+    model = AzureOPENAILLM("gpt-4o")
+    prompt = [[{"content": "Hello, how are you?", "role": "user"}]]
     completions = await model.completion(prompt)
     print(completions)
 
