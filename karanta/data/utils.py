@@ -2,17 +2,24 @@ import os
 import json
 import logging
 import time
+import yaml
+import base64
 
 from typing import List, Optional, Union
 from pathlib import Path
 from functools import wraps
-
+from jinja2 import Template
+from PIL import Image
+from io import BytesIO
 
 from pdf2image import convert_from_path
 from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 from huggingface_hub import HfApi
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from karanta.constants import TARGET_IMAGE_DIM, PROMPT_PATH
+from karanta.prompts.anchor import get_anchor_text
+from karanta.data.process_pdf_utils import render_pdf_to_base64png
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +180,134 @@ def timeit(func):
         return result
 
     return timeit_wrapper
+
+
+def base64_to_grayscale(base64_string: str) -> str:
+    """
+    Convert a base64 encoded image to grayscale and return as base64
+
+    Args:
+        base64_string (str): Base64 encoded image string
+                            Can include data URL prefix or be raw base64
+
+    Returns:
+        str: Base64 encoded grayscale image
+    """
+    try:
+        # Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+        if base64_string.startswith("data:"):
+            base64_string = base64_string.split(",")[1]
+
+        # Decode base64 to bytes
+        image_bytes = base64.b64decode(base64_string)
+
+        # Open image from bytes
+        image = Image.open(BytesIO(image_bytes))
+
+        # Convert to grayscale
+        grayscale_image = image.convert("L")
+
+        # Save grayscale image to bytes
+        output_buffer = BytesIO()
+
+        # Determine original format or default to PNG
+        format = image.format if image.format else "PNG"
+        grayscale_image.save(output_buffer, format=format)
+
+        # Get bytes and encode to base64
+        grayscale_bytes = output_buffer.getvalue()
+        grayscale_base64 = base64.b64encode(grayscale_bytes).decode("utf-8")
+
+        return grayscale_base64
+
+    except Exception as e:
+        raise ValueError(f"Error processing image: {str(e)}")
+
+
+def prepare_image_and_text(
+    local_pdf_path: str,
+    page: int,
+    target_dim: int = None,
+    convert_to_grayscale: bool = True,
+) -> tuple[str, str]:
+    """
+    Common utility to prepare image and anchor text from PDF.
+
+    Returns:
+        tuple: (image_base64, anchor_text)
+    """
+    # Use TARGET_IMAGE_DIM if target_dim not specified
+    if target_dim is None:
+        target_dim = TARGET_IMAGE_DIM
+
+    image_base64 = render_pdf_to_base64png(local_pdf_path, page, target_dim)
+
+    if convert_to_grayscale:
+        image_base64 = base64_to_grayscale(image_base64)
+        # try:
+        #     image_base64 = base64_to_grayscale(image_base64)
+        # except Exception as e:
+        #     print("Failed to convert image to grayscale. Using original image.")
+
+    anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
+
+    return image_base64, anchor_text
+
+
+def load_prompt_template(prompt_key: str) -> Template:
+    """
+    Load and prepare prompt template from YAML file.
+
+    Returns:
+        Template: Jinja2 template ready for rendering
+    """
+    with open(PROMPT_PATH, "r") as stream:
+        prompt_template_dict = yaml.safe_load(stream)
+        return Template(prompt_template_dict[prompt_key])
+
+
+def create_vision_message(
+    prompt_template: Template, anchor_text: str, image_base64: str
+) -> list:
+    """
+    Create standardized message format for vision models.
+
+    Returns:
+        list: Message format compatible with OpenAI API
+    """
+    rendered_prompt = prompt_template.render({"base_text": anchor_text})
+
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": rendered_prompt,
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                },
+            ],
+        }
+    ]
+
+
+def print_results(prompt_template: Template, anchor_text: str, response_content: str):
+    """
+    Utility to print standardized results.
+    """
+    rendered_prompt = prompt_template.render({"base_text": anchor_text})
+    print(f"Prompt: {rendered_prompt}\n" + "=" * 50)
+    print(f"Response: {response_content}\n" + "=" * 50)
+
+    try:
+        parsed_response = json.loads(response_content)
+        if "natural_text" in parsed_response:
+            print(f"Generated Natural Text: {parsed_response['natural_text']}")
+    except (json.JSONDecodeError, KeyError):
+        print("Could not extract natural_text from response")
 
 
 def openai_response_format_schema() -> dict:
