@@ -19,9 +19,10 @@ from pypdf import PdfReader
 
 from karanta.data.utils import (
     timeit,
-    openai_response_format_schema,
     prepare_image_and_text,
     load_prompt_template,
+    openai_response_format_schema_multipages,
+    create_vision_message,
 )
 from karanta.constants import TARGET_IMAGE_DIM, ModelGroup, Model
 
@@ -48,6 +49,8 @@ def build_page_query_openai(
     azure_source_dir: str,
     convert_to_grayscale: bool = True,
     prompt_key: str = "olmo_ocr_system_prompt",
+    response_schema: callable = openai_response_format_schema_multipages,
+    prompt_path="configs/prompts/open_ai_data_generation.yaml",
 ) -> dict:
     image_base64, anchor_text = prepare_image_and_text(
         local_pdf_path,
@@ -55,8 +58,10 @@ def build_page_query_openai(
         target_dim=TARGET_IMAGE_DIM,
         convert_to_grayscale=convert_to_grayscale,
     )
-    prompt_template_dict = load_prompt_template(prompt_key)
+    prompt_template = load_prompt_template(prompt_key, prompt_path=prompt_path)
     pretty_pdf_path = os.path.basename(local_pdf_path)
+
+    messages = create_vision_message(prompt_template, anchor_text, image_base64)
 
     return {
         "custom_id": f"{pretty_pdf_path}-{page}",
@@ -65,30 +70,12 @@ def build_page_query_openai(
         "url": "/v1/chat/completions",
         "body": {
             "model": model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt_template_dict["system"].render(
-                                {"base_text": anchor_text}
-                            ),
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}"
-                            },
-                        },
-                    ],
-                }
-            ],
+            "messages": messages,
             "temperature": 0.1,
             "max_tokens": 6000,
             "logprobs": True,
             "top_logprobs": 5,
-            "response_format": openai_response_format_schema(),
+            "response_format": response_schema(),
         },
     }
 
@@ -101,6 +88,8 @@ def build_page_query_vllm_olmoocr(
     azure_source_dir: str = None,
     convert_to_grayscale: bool = True,
     prompt_key: str = "olmo_ocr_system_prompt",
+    response_schema: callable = openai_response_format_schema_multipages,
+    prompt_path="configs/prompts/open_ai_data_generation.yaml",
 ) -> dict:
     """
     Turns out that the OlmoOCR model is already pretty good on a lot of our content so the goal is to sort of
@@ -112,36 +101,22 @@ def build_page_query_vllm_olmoocr(
         target_dim=TARGET_IMAGE_DIM,
         convert_to_grayscale=convert_to_grayscale,
     )
-    prompt_template_dict = load_prompt_template(prompt_key)
+    prompt_template = load_prompt_template(prompt_key, prompt_path)
     pretty_pdf_path = os.path.basename(local_pdf_path)
+
+    messages = create_vision_message(prompt_template, anchor_text, image_base64)
 
     # Construct A list of batch requests to send to the VLLM server
     return {
         "custom_id": f"{pretty_pdf_path}-{page}",
         "azure_source_dir": azure_source_dir,
         "model": model_name,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_template_dict["system"].render(
-                            {"base_text": anchor_text}
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-                    },
-                ],
-            }
-        ],
+        "messages": messages,
         "temperature": 0.1,
         "max_tokens": 6000,
         "logprobs": True,
         "top_logprobs": 5,
-        "response_format": openai_response_format_schema(),
+        "response_format": response_schema(),
     }
 
 
@@ -182,10 +157,11 @@ def main(args):
 
                 if args.num_pages_per_pdf == -1:
                     pages_available = total_pages
-                    sample_pages = range(total_pages)
+                    sample_pages = [i for i in range(1, total_pages + 1)]
                 elif args.num_pages_per_pdf >= total_pages:
                     pages_available = total_pages
-                    sample_pages = range(total_pages)
+
+                    sample_pages = [i for i in range(1, total_pages + 1)]
                 else:
                     pages_available = args.num_pages_per_pdf
                     sample_pages = random.sample(
@@ -284,7 +260,7 @@ if __name__ == "__main__":
         "--azure_source_dir",
         type=str,
         default=None,
-        required=True,
+        required=False,
         help="Azure source directory for the prompts.",
     )
     args = parser.parse_args()

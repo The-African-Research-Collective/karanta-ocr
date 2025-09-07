@@ -11,9 +11,11 @@ import argparse
 
 from openai import OpenAI
 from dotenv import load_dotenv
+from typing import Optional
 
 from karanta.data.utils import (
     openai_response_format_schema,
+    openai_response_format_schema_multipages,
     prepare_image_and_text,
     load_prompt_template,
     create_vision_message,
@@ -29,35 +31,41 @@ load_dotenv()
 async def test_build_page_query_azure(
     local_pdf_path: str,
     page: int,
-    model_name: str,
+    model_name: str = "gpt-4o",
     convert_to_grayscale: bool = True,
     prompt_key: str = "olmo_ocr_system_prompt",
+    response_schema: callable = openai_response_format_schema_multipages,
+    verbose: bool = True,
+    prompt_path: Optional[str] = None,
 ) -> dict:
     """Test function for Azure OpenAI API."""
     # Prepare common data
     image_base64, anchor_text = prepare_image_and_text(
         local_pdf_path, page, convert_to_grayscale=convert_to_grayscale
     )
-    prompt_template = load_prompt_template(prompt_key)
+    prompt_template = load_prompt_template(prompt_key, prompt_path)
 
     # Create client and message
-    client = AzureOPENAILLM("gpt-4o")
+    client = AzureOPENAILLM(model_name)
     messages = create_vision_message(prompt_template, anchor_text, image_base64)
 
     # Make API call
     response = await client.completion(
         [messages],  # Azure client expects nested structure
-        openai_response_format_schema(),
+        response_schema(),
         temperature=0.1,
         max_tokens=6000,
     )
 
     # Print results
-    response_content = response[0].generation
-    print_results(prompt_template, anchor_text, str(response_content))
+    if verbose:
+        response_content = response[0].generation
+        print_results(prompt_template, anchor_text, str(response_content))
 
-    if isinstance(response_content, dict) and "natural_text" in response_content:
-        print(f"Generated Natural Text: {response_content['natural_text']}")
+        if isinstance(response_content, dict) and "natural_text" in response_content:
+            print(f"Generated Natural Text: {response_content['natural_text']}")
+
+    return response
 
 
 def test_build_page_query_openai(
@@ -66,13 +74,16 @@ def test_build_page_query_openai(
     model_name: str,
     convert_to_grayscale: bool = True,
     prompt_key: str = "olmo_ocr_system_prompt",
+    response_schema: callable = openai_response_format_schema_multipages,
+    verbose: bool = True,
+    prompt_path: Optional[str] = None,
 ) -> dict:
     """Test function for OpenAI API."""
     # Prepare common data
     image_base64, anchor_text = prepare_image_and_text(
         local_pdf_path, page, convert_to_grayscale=convert_to_grayscale
     )
-    prompt_template = load_prompt_template(prompt_key)
+    prompt_template = load_prompt_template(prompt_key, prompt_path)
 
     # Create client and make API call
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -83,14 +94,15 @@ def test_build_page_query_openai(
         messages=messages,
         temperature=0.1,
         max_tokens=6000,
-        logprobs=True,
-        top_logprobs=5,
-        response_format=openai_response_format_schema(),
+        response_format=response_schema(),
     )
 
     # Print results
-    response_content = response.choices[0].message.content
-    print_results(prompt_template, anchor_text, response_content)
+    if verbose:
+        response_content = response.choices[0].message.content
+        print_results(prompt_template, anchor_text, response_content)
+
+    return response
 
 
 def test_build_page_query_vllm_olmoocr(
@@ -100,6 +112,7 @@ def test_build_page_query_vllm_olmoocr(
     host: str,
     convert_to_grayscale: bool = True,
     prompt_key: str = "olmo_ocr_system_prompt",
+    verbose: bool = True,
 ) -> dict:
     """
     Test function for VLLM OlmoOCR model.
@@ -131,8 +144,11 @@ def test_build_page_query_vllm_olmoocr(
     )
 
     # Print results
-    response_content = response.choices[0].message.content
-    print_results(prompt_template, anchor_text, response_content)
+    if verbose:
+        response_content = response.choices[0].message.content
+        print_results(prompt_template, anchor_text, response_content)
+
+    return response
 
 
 if __name__ == "__main__":

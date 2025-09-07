@@ -57,6 +57,7 @@ class JobManager:
                 },
                 f,
                 indent=2,
+                ensure_ascii=False,
             )
 
     def get_pending_tasks(self, job_id: str):

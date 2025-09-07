@@ -2,7 +2,7 @@ import json
 import os
 import re
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Dict, List, Any, Optional
 
 from loguru import logger
@@ -12,6 +12,24 @@ from loguru import logger
 class ModelCompletion:
     generation: Dict[str, Any] | List[str]
     model: str
+
+    def to_json(self) -> str:
+        """
+        Convert to JSON string.
+
+        Returns:
+            JSON string representation
+        """
+        return json.dumps(asdict(self), ensure_ascii=False)
+
+    def to_dict(self) -> dict:
+        """
+        Convert to dictionary.
+
+        Returns:
+            Dictionary representation
+        """
+        return asdict(self)
 
 
 class Generation_Models(Enum):
