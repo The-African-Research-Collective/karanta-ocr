@@ -21,7 +21,41 @@ logger = logging.getLogger(__name__)
 
 
 def process_single_pdf(pdf_path, output_base_path, output_format):
-    """Process a single PDF file."""
+    """
+    Process a single PDF file by converting it to individual page images.
+
+    This function takes a PDF file, converts each page to an image using the
+    convert_pdf2image utility, and saves each page as a separate image file
+    in the specified output directory with sequential naming.
+
+    Args:
+        pdf_path (tuple): A tuple containing (full_path, item) where:
+            - full_path (str): The complete file path to the PDF
+            - item (str): The filename of the PDF
+        output_base_path (Path): The base directory path where output images will be saved
+        output_format (str): The image format for output files (e.g., 'JPEG', 'PNG')
+
+    Returns:
+        tuple: A tuple containing (item, success) where:
+            - item (str): The filename of the processed PDF
+            - success (bool): True if processing succeeded, False if it failed
+
+    Raises:
+        Exception: Any exception during PDF processing is caught and logged,
+                  returning False in the success field
+
+    Example:
+        >>> pdf_info = ("/path/to/document.pdf", "document.pdf")
+        >>> output_path = Path("/output/images")
+        >>> result = process_single_pdf(pdf_info, output_path, "JPEG")
+        >>> print(result)  # ("document.pdf", True)
+
+    Note:
+        - Each page is saved with the naming pattern: {pdf_basename}_pg_{page_index}.{format}
+        - Uses a temporary directory for intermediate processing
+        - Creates output directories as needed
+        - Logs processing status and any errors encountered
+    """
     full_path, item = pdf_path
     combined_pages = []
 
