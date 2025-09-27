@@ -7,190 +7,148 @@ Sample usage:python -m karanta.data.test_prompts --local_pdf_path /Users/odunayo
 """
 
 import os
-import yaml
-import json
 import argparse
 
-from jinja2 import Template
 from openai import OpenAI
 from dotenv import load_dotenv
+from typing import Optional
 
-from karanta.data.process_pdf_utils import render_pdf_to_base64png
-from karanta.prompts.anchor import get_anchor_text
-from karanta.data.utils import openai_response_format_schema
-from karanta.constants import TARGET_IMAGE_DIM, PROMPT_PATH, Model
+from karanta.data.utils import (
+    openai_response_format_schema,
+    openai_response_format_schema_multipages,
+    prepare_image_and_text,
+    load_prompt_template,
+    create_vision_message,
+    print_results,
+)
+from karanta.constants import TARGET_IMAGE_DIM, Model
 from karanta.llm_clients.azure_client import AzureOPENAILLM
 
 load_dotenv()
 
 
+# Refactored main functions
 async def test_build_page_query_azure(
-    local_pdf_path: str, page: int, model_name: str
+    local_pdf_path: str,
+    page: int,
+    model_name: str = "gpt-4o",
+    convert_to_grayscale: bool = True,
+    prompt_key: str = "olmo_ocr_system_prompt",
+    response_schema: callable = openai_response_format_schema_multipages,
+    verbose: bool = True,
+    prompt_path: Optional[str] = None,
 ) -> dict:
-    image_base64 = render_pdf_to_base64png(local_pdf_path, page, TARGET_IMAGE_DIM)
-    anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
-
-    image_page = True
-
-    if len(anchor_text.split("\n")) > 10:
-        image_page = False
-
-    with open(PROMPT_PATH, "r") as stream:
-        prompt_template_dict = yaml.safe_load(stream)
-
-        if image_page:
-            prompt_template_dict["system"] = Template(
-                prompt_template_dict["newspaper_system"]
-            )
-        else:
-            prompt_template_dict["system"] = Template(prompt_template_dict["system"])
-
-    client = AzureOPENAILLM("gpt-4o")
-
-    print(
-        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}\n======="
+    """Test function for Azure OpenAI API."""
+    # Prepare common data
+    image_base64, anchor_text = prepare_image_and_text(
+        local_pdf_path, page, convert_to_grayscale=convert_to_grayscale
     )
+    prompt_template = load_prompt_template(prompt_key, prompt_path)
 
-    prompt = [
-        [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_template_dict["system"].render(
-                            {"base_text": anchor_text}
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-                    },
-                ],
-            }
-        ]
-    ]
+    # Create client and message
+    client = AzureOPENAILLM(model_name)
+    messages = create_vision_message(prompt_template, anchor_text, image_base64)
 
+    # Make API call
     response = await client.completion(
-        prompt, openai_response_format_schema(), temperature=0.1, max_tokens=6000
+        [messages],  # Azure client expects nested structure
+        response_schema(),
+        temperature=0.1,
+        max_tokens=6000,
     )
 
-    print(f"Response: {response[0].generation}\n======================")
-    print(f"Generated Natural Text: {response[0].generation['natural_text']}")
+    # Print results
+    if verbose:
+        response_content = response[0].generation
+        print_results(prompt_template, anchor_text, str(response_content))
+
+        if isinstance(response_content, dict) and "natural_text" in response_content:
+            print(f"Generated Natural Text: {response_content['natural_text']}")
+
+    return response
 
 
 def test_build_page_query_openai(
-    local_pdf_path: str, page: int, model_name: str
+    local_pdf_path: str,
+    page: int,
+    model_name: str,
+    convert_to_grayscale: bool = True,
+    prompt_key: str = "olmo_ocr_system_prompt",
+    response_schema: callable = openai_response_format_schema_multipages,
+    verbose: bool = True,
+    prompt_path: Optional[str] = None,
 ) -> dict:
-    image_base64 = render_pdf_to_base64png(local_pdf_path, page, TARGET_IMAGE_DIM)
-    anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
-
-    image_page = True
-
-    if len(anchor_text.split("\n")) > 10:
-        image_page = False
-
-    with open(PROMPT_PATH, "r") as stream:
-        prompt_template_dict = yaml.safe_load(stream)
-
-        if image_page:
-            prompt_template_dict["system"] = Template(
-                prompt_template_dict["newspaper_system"]
-            )
-        else:
-            prompt_template_dict["system"] = Template(prompt_template_dict["system"])
-
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    print(
-        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}\n======================"
+    """Test function for OpenAI API."""
+    # Prepare common data
+    image_base64, anchor_text = prepare_image_and_text(
+        local_pdf_path, page, convert_to_grayscale=convert_to_grayscale
     )
+    prompt_template = load_prompt_template(prompt_key, prompt_path)
+
+    # Create client and make API call
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    messages = create_vision_message(prompt_template, anchor_text, image_base64)
 
     response = client.chat.completions.create(
         model=model_name,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_template_dict["system"].render(
-                            {"base_text": anchor_text}
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-                    },
-                ],
-            }
-        ],
+        messages=messages,
         temperature=0.1,
         max_tokens=6000,
-        logprobs=True,
-        top_logprobs=5,
-        response_format=openai_response_format_schema(),
+        response_format=response_schema(),
     )
-    print(f"Response: {response.choices[0].message.content}\n===========")
-    print(
-        f"Generated Natural Text: {json.loads(response.choices[0].message.content)['natural_text']}"
-    )
+
+    # Print results
+    if verbose:
+        response_content = response.choices[0].message.content
+        print_results(prompt_template, anchor_text, response_content)
+
+    return response
 
 
 def test_build_page_query_vllm_olmoocr(
-    local_pdf_path: str, page: int, model_name: str, host: str
+    local_pdf_path: str,
+    page: int,
+    model_name: str,
+    host: str,
+    convert_to_grayscale: bool = True,
+    prompt_key: str = "olmo_ocr_system_prompt",
+    verbose: bool = True,
 ) -> dict:
     """
+    Test function for VLLM OlmoOCR model.
+
     Turns out that the OlmoOCR model is already pretty good on a lot of our content so the goal is to sort of
     distill the output of the model into a separate model and use that to train a new model that is faster and smaller
     """
-    image_base64 = render_pdf_to_base64png(local_pdf_path, page, 2048)
-    anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
-
-    with open(PROMPT_PATH, "r") as stream:
-        prompt_template_dict = yaml.safe_load(stream)
-
-        if "olmo_ocr_system_prompt" in prompt_template_dict:
-            prompt_template_dict["system"] = Template(
-                prompt_template_dict["olmo_ocr_system_prompt"]
-            )
-
-    client = OpenAI(base_url=host, api_key="token-abc123")
-
-    print(
-        f"Prompt: {prompt_template_dict['system'].render({'base_text': anchor_text})}"
+    # Prepare common data (uses 2048 for this model)
+    image_base64, anchor_text = prepare_image_and_text(
+        local_pdf_path,
+        page,
+        target_dim=TARGET_IMAGE_DIM,
+        convert_to_grayscale=convert_to_grayscale,
     )
+    prompt_template = load_prompt_template(prompt_key)
+
+    # Create client and make API call
+    client = OpenAI(base_url=host, api_key="token-abc123")
+    messages = create_vision_message(prompt_template, anchor_text, image_base64)
 
     response = client.chat.completions.create(
         model=model_name,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt_template_dict["system"].render(
-                            {"base_text": anchor_text}
-                        ),
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
-                    },
-                ],
-            }
-        ],
+        messages=messages,
         temperature=0.1,
-        max_tokens=3000,
+        max_tokens=3000,  # Different max_tokens for this model
         logprobs=True,
         top_logprobs=5,
         response_format=openai_response_format_schema(),
     )
 
-    print(f"Response: {response.choices[0].message.content}\n==================")
-    print(
-        f"Generated Natural Text: {json.loads(response.choices[0].message.content)['natural_text']}"
-    )
+    # Print results
+    if verbose:
+        response_content = response.choices[0].message.content
+        print_results(prompt_template, anchor_text, response_content)
+
+    return response
 
 
 if __name__ == "__main__":
@@ -205,6 +163,11 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="Page number to process from the PDF file.",
+    )
+    parser.add_argument(
+        "--convert_to_grayscale",
+        action="store_true",
+        help="Convert the image to grayscale before sending to the model.",
     )
     parser.add_argument(
         "--inference_type",
@@ -238,6 +201,7 @@ if __name__ == "__main__":
             local_pdf_path=args.local_pdf_path,
             page=args.page_num,
             model_name=args.model_name,
+            convert_to_grayscale=args.convert_to_grayscale,
         )
     elif args.inference_type == "olmoocr":
         test_build_page_query_vllm_olmoocr(
@@ -245,6 +209,7 @@ if __name__ == "__main__":
             page=args.page_num,
             model_name=args.model_name,
             host=args.host,
+            convert_to_grayscale=args.convert_to_grayscale,
         )
     elif args.inference_type == "azure":
         import asyncio
@@ -254,5 +219,6 @@ if __name__ == "__main__":
                 local_pdf_path=args.local_pdf_path,
                 page=args.page_num,
                 model_name=args.model_name,
+                convert_to_grayscale=args.convert_to_grayscale,
             )
         )

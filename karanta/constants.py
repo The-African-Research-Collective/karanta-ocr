@@ -12,6 +12,7 @@ class ModelGroup(str, Enum):
 
 class Model(str, Enum):
     GPT_5 = "gpt-5"
+    GPT_4O = "gpt-4o"
     GPT_5_MINI = "gpt-5-mini"
     GPT_5_CHAT_LATEST = "gpt-5-chat-latest"
     GPT_4_1 = "gpt-4.1-2025-04-14"

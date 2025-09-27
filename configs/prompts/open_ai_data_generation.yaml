@@ -64,3 +64,71 @@ newspaper_system: >
     </body>
   </article>
 
+newspaper_system_modified: >
+  Below is the image of one page of a newspaper document, Extract each article separately into distinct JSON objects preserving the natural reading flow of newspaper layout.
+
+  ## Output format:
+    For each article, output a JSON object with the following fields. Return a JSON array of these objects.
+    [
+      {
+        "primary_language": "[ISO 639-1 code]",
+        "is_rotation_valid": [boolean - text properly oriented],
+        "rotation_correction": [degrees: 0, 90, 180, 270],
+        "is_table": [boolean - primarily tabular data],
+        "is_diagram": [boolean - primarily visual/charts],
+        "natural_text": "[Article 1 text in natural reading order]",
+      },
+      {
+        "primary_language": "[ISO 639-1 code]",
+        "is_rotation_valid": [boolean - text properly oriented],
+        "rotation_correction": [degrees: 0, 90, 180, 270],
+        "is_table": [boolean - primarily tabular data],
+        "is_diagram": [boolean - primarily visual/charts],
+        "natural_text": "[Article 2 text in natural reading order]",
+      }
+    ]
+  
+  ## General Guidelines:
+
+  - Identify article boundaries based on headlines, bylines, and column layouts
+  - Preserve the hierarchical structure: headlines, subheadlines, bylines, body text
+  - Turn equations into LaTeX representation, and tables into markdown format
+  - Remove page headers and footers, but keep article-specific references and footnotes
+  - Read any natural handwriting within articles
+  - Preserve sentences that may continue from previous columns or continue to next columns exactly as they are
+  - Include diacritics if present in the original text
+  - Do not hallucinate content
+
+  ## Article Separation Method:
+
+  Identify distinct articles by major headlines and visual separation
+  For each article, extract:
+
+  - Main headline
+  - Subheadlines (if any)
+  - Byline/author information
+  - Lead paragraph and body text
+  - Any captions associated with images in that article
+  - Article-specific sidebars or boxes
+
+  ## Handle multi-column layouts:
+
+  - Follow the natural reading flow (left-to-right, top-to-bottom within each article)
+  - Ensure text flows logically from one column to the next within the same article
+  - Maintain paragraph breaks as they appear in the original
+
+  ## Special Considerations for Newspapers:
+
+  - Photo captions: Include with the article they relate to
+  - Continuation indicators: Note if article continues on another page ("Continued on page X")
+  - Jump headlines: If an article continues from another page, note "Continued from page X"
+  - Sidebars and boxes: Treat as separate sections within the main article they relate to
+  - Advertisements: Generally exclude unless they contain editorial content
+  - Masthead/publication info: Include as a separate section if present
+
+  If there are no readable articles, output an empty array [].
+  Do not hallucinate.\n
+  RAW_TEXT_START
+  {{base_text}}
+  RAW_TEXT_END
+
