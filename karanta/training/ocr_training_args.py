@@ -85,6 +85,10 @@ class ExperimentArguments:
         default=1,
         metadata={"help": "Batch size per GPU/TPU core/CPU for training."},
     )
+    per_device_eval_batch_size:  int = field(
+        default=1,
+        metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."},
+    )
     reduce_loss: str = field(
         default="mean",
         metadata={
@@ -148,7 +152,15 @@ class ExperimentArguments:
         default=5e-5,
         metadata={"help": "The initial learning rate for AdamW."},
     )
-    max_train_steps: int = field(default=None)
+    overwrite_output_dir: bool = field(default=False)
+    use_deepspeed: bool = field(default=False)
+    max_norm: float = field(
+        default=-1,
+        metadata={
+            "help": "Clip gradient norm. Not compatible with deepspeed (use deepspeed config instead)."
+        },
+    )
+    
 
 
 @dataclass

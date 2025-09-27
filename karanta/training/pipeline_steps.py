@@ -2,6 +2,7 @@ import logging
 import base64
 import json
 import yaml
+import torch
 import numpy as np
 
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from jinja2 import Template
 from PIL import Image
 from io import BytesIO
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 
 from karanta.training.utils import SingleDatapoint
 from karanta.prompts.anchor import get_anchor_text
@@ -44,6 +46,8 @@ class PDF2ImageStep(BasePipelineStep):
         )
         png_bytes = base64.b64decode(base64_png)
         image = Image.open(BytesIO(png_bytes))
+
+        
 
         # # Update sample
         sample.image = image
@@ -201,12 +205,12 @@ class Tokenizer(BasePipelineStep):
         """
         if len(sequence) < self.max_length:
             extra_length = self.max_length - len(sequence)
-            padding = np.full((extra_length,), pad_value, dtype=sequence.dtype)
+            padding = torch.full((extra_length,), pad_value, dtype=sequence.dtype)
 
             if self.processor.tokenizer.padding_side == "right":
-                return np.concatenate([sequence, padding])
+                return torch.cat([sequence, padding])
             else:
-                return np.concatenate([padding, sequence])
+                return torch.cat([padding, sequence])
 
         elif len(sequence) > self.max_length:
             return sequence[: self.max_length]
@@ -227,6 +231,8 @@ class Tokenizer(BasePipelineStep):
         Returns:
             The same sample with model_inputs populated with tokenized data
         """
+
+        self.processor.num_additional_tokens = 1
 
         # === DATA EXTRACTION ===
         # Extract the core components of our OCR training sample
@@ -272,14 +278,14 @@ class Tokenizer(BasePipelineStep):
             text=[text],  # The formatted extraction instruction
             images=[main_image],  # The document image to process
             padding=True,  # Pad sequences to same length
-            return_tensors="np",  # Return NumPy arrays
+            return_tensors="pt",  # Return NumPy arrays
         )
 
         # === STRUCTURED OUTPUT TOKENIZATION ===
         # Tokenize the target structured text output (XML/JSON/YAML format)
         # This is what the model should learn to generate from the document image
         # Examples: JSON with extracted fields, XML with document structure, YAML with metadata
-        labels = self.processor(text=[response], padding=True, return_tensors="np")
+        labels = self.processor(text=[response], padding=True, return_tensors="pt")
 
         # === END-OF-EXTRACTION TOKEN HANDLING ===
         # Add special token to mark where the model should stop generating structured output
@@ -290,18 +296,18 @@ class Tokenizer(BasePipelineStep):
         )["input_ids"]
 
         # Convert to same data type as other tokens for concatenation
-        end_tokens = np.array(end_tokens, dtype=inputs.input_ids.dtype)
+        end_tokens = torch.tensor(end_tokens, dtype=inputs.input_ids.dtype)
 
         # === LABEL CONCATENATION WITH END TOKEN ===
         # Handle edge case where structured output might be empty (rare for OCR tasks)
         if labels["input_ids"].shape[1] == 0:
-            labels_input_ids_0 = np.array([], dtype=inputs.input_ids.dtype)
+            labels_input_ids_0 = torch.tensor([], dtype=inputs.input_ids.dtype)
         else:
-            labels_input_ids_0 = labels["input_ids"][0].astype(inputs.input_ids.dtype)
+            labels_input_ids_0 = labels["input_ids"][0].type(inputs.input_ids.dtype)
 
         # Append end token to the structured output labels
-        labels["input_ids"] = np.concatenate([labels_input_ids_0, end_tokens])
-        labels["input_ids"] = np.expand_dims(
+        labels["input_ids"] = torch.cat([labels_input_ids_0, end_tokens])
+        labels["input_ids"] = torch.unsqueeze(
             labels["input_ids"], axis=0
         )  # Add batch dimension back
 
@@ -309,13 +315,13 @@ class Tokenizer(BasePipelineStep):
         # Create the full training sequence: [extraction_instruction] + [structured_output] + [end_token]
         # The model will see this entire sequence but only be trained to generate the structured output part
         # Example: "Extract as JSON" + document_image -> {"name": "John", "address": "123 Main St"} + <|im_end|>
-        input_ids = np.concatenate([inputs.input_ids[0], labels.input_ids[0]], axis=0)
+        input_ids = torch.cat([inputs.input_ids[0], labels.input_ids[0]], axis=0)
 
         # === ATTENTION MASK CREATION ===
         # Create attention mask - all tokens participate in attention
         # The model needs to attend to both the instruction and document image features
         # to understand what type of extraction is requested and what content to extract
-        attention_mask = np.ones_like(input_ids)
+        attention_mask = torch.ones_like(input_ids)
 
         # === TRAINING LABEL CREATION (CRITICAL FOR OCR LEARNING) ===
         # Create labels for training with proper masking:
@@ -323,7 +329,7 @@ class Tokenizer(BasePipelineStep):
         # - Only the structured output portion gets actual token IDs as labels
         # This ensures the model only learns to generate structured text output, not repeat the instruction
         # The model learns: document_image + instruction -> structured_output
-        labels_full = np.full_like(input_ids, fill_value=self.masking_index)
+        labels_full = torch.full_like(input_ids, fill_value=self.masking_index)
 
         # Unmask only the structured output portion (everything after the instruction prompt)
         # The model will be penalized only for mistakes in generating the XML/JSON/YAML output

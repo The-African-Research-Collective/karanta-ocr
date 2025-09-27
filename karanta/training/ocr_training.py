@@ -26,7 +26,7 @@ from transformers import (
 )
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 
-from karanta.training.utils import ArgumentParserPlus, get_last_checkpoint_path
+from karanta.training.utils import ArgumentParserPlus, get_last_checkpoint_path, clean_last_n_checkpoints, save_with_accelerate
 from karanta.training.ocr_training_args import (
     ExperimentArguments,
     ModelArguments,
@@ -41,27 +41,36 @@ logger = get_logger(__name__)
 def evaluate_model(
     model: torch.nn.Module,
     eval_dataloader: Dict[str, DataLoader],
-    device: torch.device,
-    reduce_loss: str,
-    device_type: str,
-    dtype: str,
+    accelerator
 ):
     model.eval()
+    eval_metrics = {}
 
     with torch.no_grad():
         for eval_set, eval_set_dataloader in eval_dataloader.items():
             total_loss = 0.0
             num_batches = 0
 
-            for batch in eval_set_dataloader:
+            for batch in tqdm(eval_set_dataloader, desc=f"Evaluating {eval_set}"):
                 if batch is None:
                     continue
 
-                batch = {k: v.to(device) for k, v in batch.items()}
-                with torch.autocast(device_type=device_type, dtype=dtype):
+                batch = {k: v.to(accelerator.device) for k, v in batch.items()}
+                with accelerator.autocast():
                     outputs = model(**batch)
+                    batch_loss = outputs.loss.item()
 
-    return total_loss, num_batches, outputs
+                    num_batches += 1
+                    total_loss += batch_loss
+
+            eval_loss = total_loss/num_batches
+            eval_metrics[f"{eval_set}_loss"] = eval_loss
+        
+        # Average eval loss across all datasets
+        eval_loss = sum(eval_metrics.values()) / len(eval_metrics)
+        eval_metrics['eval_loss'] = eval_loss
+
+    return eval_metrics
 
 
 def main(args: ArgumentParserPlus):
@@ -98,6 +107,7 @@ def main(args: ArgumentParserPlus):
         dataloader_config=dataloader_config,
         **accelerator_log_kwargs,
         kwargs_handlers=[timeout_kwargs],
+        mixed_precision = "bf16"
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -146,9 +156,6 @@ def main(args: ArgumentParserPlus):
     train_dataset = (
         ConcatDataset(train_dataset) if len(train_dataset) > 1 else train_dataset[0]
     )
-    train_dataset = train_dataset.filter(
-        lambda example: (example["labels"] != -100).any()
-    )
     logger.info(f"Total training samples: {len(train_dataset)}")
 
     # Initialize the evaluation dataset
@@ -171,7 +178,8 @@ def main(args: ArgumentParserPlus):
         dl = DataLoader(
             dataset,
             collate_fn=data_collator,
-            batch_size=exp_args.per_device_train_batch_size,
+            batch_size=exp_args.per_device_eval_batch_size,
+            shuffle=True
         )
 
         eval_dataloaders[data_mix.get("name", str(i))] = dl
@@ -331,7 +339,7 @@ def main(args: ArgumentParserPlus):
     max_train_steps = int(
         math.ceil(exp_args.num_train_epochs * num_update_steps_per_epoch)
     )
-    _max_train_samples = int(math.ceil(exp_args.num_train_epochs * len(train_dataset)))
+    max_train_samples = int(math.ceil(exp_args.num_train_epochs * len(train_dataset)))
 
     # Set up scheduler
     lr_scheduler = get_scheduler(
@@ -339,7 +347,7 @@ def main(args: ArgumentParserPlus):
         optimizer=optimizer,
         num_warmup_steps=int(max_train_steps * exp_args.warmup_ratio),
         num_training_steps=max_train_steps,
-        scheduler_specific_kwargs=exp_args.lr_scheduler_kwargs,
+        # scheduler_specific_kwargs=exp_args.lr_scheduler_kwargs,
     )
 
     # Prepare everything with `accelerator`.
@@ -353,13 +361,15 @@ def main(args: ArgumentParserPlus):
     )
     # Afterwards we recalculate our number of training epochs
     exp_args.num_train_epochs = math.ceil(
-        exp_args.max_train_steps / num_update_steps_per_epoch
+        max_train_steps / num_update_steps_per_epoch
     )
 
     # Figure out how many steps we should save the Accelerator states
     checkpointing_steps = exp_args.checkpointing_steps
-    if checkpointing_steps is not None and str(checkpointing_steps).lower() != "epoch":
+    if checkpointing_steps and str(checkpointing_steps).lower() != "epoch":
         checkpointing_steps = int(checkpointing_steps)
+    elif checkpointing_steps and isinstance(checkpointing_steps, str) and checkpointing_steps.lower() == "epoch":
+        checkpointing_steps = num_update_steps_per_epoch
 
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
@@ -407,10 +417,10 @@ def main(args: ArgumentParserPlus):
     logger.info(
         f"  Gradient Accumulation steps = {exp_args.gradient_accumulation_steps}"
     )
-    logger.info(f"  Total optimization steps = {exp_args.max_train_steps}")
+    logger.info(f"  Total optimization steps = {max_train_steps}")
     # Only show the progress bar once on each machine.
-    _progress_bar = tqdm(
-        range(exp_args.max_train_steps), disable=not accelerator.is_local_main_process
+    progress_bar = tqdm(
+        range(max_train_steps), disable=not accelerator.is_local_main_process
     )
 
     completed_steps = 0
@@ -440,23 +450,136 @@ def main(args: ArgumentParserPlus):
             resume_step -= starting_epoch * len(train_dataloader)
 
     # Evaluate before training
-    if accelerator.is_local_main_process:
-        metrics = evaluate_model(
+    if accelerator.is_main_process:
+        eval_metrics = evaluate_model(
             model,
             eval_dataloaders,
-            accelerator.device,
-            exp_args.reduce_loss,
-            "cuda",
-            torch.bfloat16,
+            accelerator
         )
-        logger.info(f"Initial evaluation: {metrics}")
-        accelerator.log(metrics, step=completed_steps)
+    accelerator.log(eval_metrics, step=completed_steps)
+    logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
 
     logger.info(f"Starting from epoch {starting_epoch} and step {completed_steps}.")
+    logger.info(f"Total training steps: {max_train_steps}, Total samples to process: {max_train_samples}")
 
-    print(data_args)
-    print(model_args)
+    progress_bar.update(completed_steps)
+    start_time = time.time()
 
+    for epoch in range(starting_epoch, exp_args.num_train_epochs):
+
+        model.train()
+        train_dataloader.set_epoch(epoch)
+
+        print("here")
+        total_loss = 0
+        local_total_tokens = 0
+        total_token_including_padding = 0
+
+        if last_checkpoint_path is not None and resume_step is not None:
+            active_dataloader = accelerator.skip_first_batches(
+                train_dataloader, num_batches = resume_step
+            )
+        else:
+            active_dataloader = train_dataloader
+        
+        for step, batch in enumerate(active_dataloader):
+
+            batch = {k:v.to(accelerator.device) for k, v in batch.items()}
+
+            local_total_tokens += batch["attention_mask"].sum()
+            total_token_including_padding += batch["attention_mask"].numel()
+
+            with accelerator.accumulate(model):
+                output = model(**batch)
+                loss = output.loss
+            
+                total_loss += loss.detach().float()
+                accelerator.backward(loss)
+
+                # Gradient clipping is not needed when using deepspeed
+                if not exp_args.use_deepspeed:
+                    if accelerator.sync_gradients and exp_args.clip_grad_norm > 0:
+                        accelerator.clip_grad_norm_(
+                            model.parameters(), exp_args.max_norm
+                        )
+                
+                optimizer.step()
+                optimizer.zero_grad()
+                lr_scheduler.step()
+            
+            if accelerator.sync_gradients:
+                progress_bar.update(1)
+                completed_steps += 1
+
+                if exp_args.eval_steps and completed_steps % exp_args.eval_steps == 0:
+                    if accelerator.is_main_process:
+                        eval_metrics = evaluate_model(
+                                    model,
+                                    eval_dataloaders,
+                                    accelerator
+                                )
+                        accelerator.log(eval_metrics, step=completed_steps)
+                        logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
+
+                if exp_args.logging_steps and completed_steps % exp_args.logging_steps == 0:
+                    avg_loss = (
+                        accelerator.gather(total_loss).mean().item()
+                        / exp_args.gradient_accumulation_steps
+                        / exp_args.logging_steps
+                    )
+                    total_tokens = accelerator.gather(local_total_tokens).sum().item()
+                    total_tokens_including_padding = (
+                        accelerator.gather(total_token_including_padding).sum().item()
+                    )
+                    training_metrics_to_log = {
+                        "learning_rate": lr_scheduler.get_last_lr()[0],
+                        "train_loss": avg_loss,
+                        "total_tokens": total_tokens,
+                        "per_device_tps": total_tokens
+                        / accelerator.num_processes
+                        / (time.time() - start_time),
+                        "total_tokens_including_padding": total_tokens_including_padding,
+                        "per_device_tps_including_padding": total_tokens_including_padding
+                        / accelerator.num_processes
+                        / (time.time() - start_time),
+                    }
+
+                    logger.info(f"  Step: {completed_steps}, LR: {lr_scheduler.get_last_lr()[0]}, Loss: {avg_loss}, TPS: {total_tokens / (time.time() - start_time)}")
+                    
+                    if exp_args.with_tracking:
+                        accelerator.log(training_metrics_to_log, step=completed_steps)
+
+                    total_loss = 0
+
+            if completed_steps > 0 and completed_steps % checkpointing_steps == 0:
+                output_dir = f"step_{completed_steps}"
+                if exp_args.output_dir is not None:
+                    output_dir = os.path.join(exp_args.output_dir, output_dir)
+
+                accelerator.save_state(output_dir)
+                accelerator.wait_for_everyone()
+
+            if exp_args.output_dir is not None:
+                save_with_accelerate(
+                    accelerator,
+                    model,
+                    exp_args.output_dir,
+                    model_args.use_lora,
+                )
+
+            # remove all checkpoints to save space
+            if accelerator.is_local_main_process:
+                clean_last_n_checkpoints(exp_args.output_dir, keep_last_n_checkpoints=0)
+            
+            # Final evaluation
+            if accelerator.is_local_main_process:
+                final_metrics = evaluate_model(model, eval_dataloaders, accelerator)
+                logger.info(f"Final evaluation metrics: {final_metrics}")
+
+            accelerator.wait_for_everyone()
+
+            if exp_args.with_tracking:
+                accelerator.end_training()
 
 if __name__ == "__main__":
     parser = ArgumentParserPlus((ExperimentArguments, ModelArguments, DatasetArguments))

@@ -108,7 +108,7 @@ class LocalDataset(Dataset):
 
             if name == "Tokenizer":
                 processor = step_config.pop("processor", None)
-                processor = AutoProcessor.from_pretrained(processor)
+                processor = AutoProcessor.from_pretrained(processor, max_pixels = 2048*2048, min_pixels = 224*224)
                 step_class = str2PipelineStep.get(name)
                 step_instance = step_class(**step_config, processor=processor)
             else:
@@ -127,9 +127,13 @@ class LocalDataset(Dataset):
         """
         sample = self.dataset[idx]
 
+        print("processing", sample)
+
         for step in self.pipeline:
+            print("current pipeline step", step)
             sample = step(sample)
 
+        print("done processing", sample)
         return sample.model_inputs
 
 
@@ -241,12 +245,19 @@ if __name__ == "__main__":
 
     dataloader = DataLoader(
         dataset,
-        batch_size=2,
+        batch_size=1,
         collate_fn=DataCollator(max_token_len=all_config["max_length"]),
         num_workers=all_config["dataloader_num_workers"],
     )
 
-    print(next(iter(dataloader)))
+    from tqdm import tqdm
+
+    for sample in tqdm(iter(dataloader), total=len(dataset)):
+
+        print(sample['input_ids'].shape)
+        print(sample['attention_mask'].shape)
+        print(sample['labels'].shape)
+        print("====================================")
 
     # print(f"Dataset samples: {dataset[0].user_messages}")
 
