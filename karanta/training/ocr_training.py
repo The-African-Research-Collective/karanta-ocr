@@ -4,6 +4,7 @@ import random
 import logging
 import torch
 import math
+import deepspeed
 import transformers
 
 from datetime import timedelta
@@ -15,7 +16,7 @@ from torch.utils.data import ConcatDataset, DataLoader
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from accelerate.utils import InitProcessGroupKwargs, set_seed, DataLoaderConfiguration
+from accelerate.utils import InitProcessGroupKwargs, set_seed, DataLoaderConfiguration, DeepSpeedPlugin
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -26,6 +27,9 @@ from transformers import (
 )
 from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 
+
+import sys
+sys.path.append('/home/oogundep/karanta-ocr/')
 from karanta.training.utils import ArgumentParserPlus, get_last_checkpoint_path, clean_last_n_checkpoints, save_with_accelerate
 from karanta.training.ocr_training_args import (
     ExperimentArguments,
@@ -33,10 +37,10 @@ from karanta.training.ocr_training_args import (
     DatasetArguments,
 )
 from karanta.training.data import LocalDataset, DataCollator
+from karanta.training.muon_optimizer import SingleDeviceMuonWithAuxAdam
 
 load_dotenv()
 logger = get_logger(__name__)
-
 
 def evaluate_model(
     model: torch.nn.Module,
@@ -62,6 +66,8 @@ def evaluate_model(
 
                     num_batches += 1
                     total_loss += batch_loss
+                
+                break
 
             eval_loss = total_loss/num_batches
             eval_metrics[f"{eval_set}_loss"] = eval_loss
@@ -102,12 +108,54 @@ def main(args: ArgumentParserPlus):
     dataloader_config = DataLoaderConfiguration()
     dataloader_config.use_seedable_sampler = True
 
+    deepspeed_config = {
+        "bf16": {
+            "enabled": "auto"
+        },
+        "offload_param": {
+            "device": "cpu",
+            "pin_memory": True
+        },
+        "offload_optimizer": {
+            "device": "cpu",
+            "pin_memory": True
+        },
+        "zero_optimization": {
+            "stage": 3,
+            "overlap_comm": True,
+            "contiguous_gradients": True,
+            "sub_group_size": 1e9,
+            "reduce_bucket_size": "auto",
+            "stage3_prefetch_bucket_size": "auto",
+            "stage3_param_persistence_threshold": "auto",
+            "stage3_max_live_parameters": 1e9,
+            "stage3_max_reuse_distance": 1e9,
+            "stage3_gather_16bit_weights_on_model_save": True
+        },
+        "gradient_accumulation_steps": "auto",
+        "gradient_clipping": "auto",
+        "steps_per_print": 1e5,
+        "train_batch_size": "auto",
+        "train_micro_batch_size_per_gpu": "auto",
+        "wall_clock_breakdown": False
+    }
+    
+    deepspeed_plugin = DeepSpeedPlugin(
+        hf_ds_config=deepspeed_config,
+        zero_stage=3,
+        gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
+        gradient_clipping="auto",
+        offload_optimizer_device="cpu",
+        offload_param_device="cpu",
+    )
+
     accelerator = Accelerator(
         gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
         dataloader_config=dataloader_config,
+        # deepspeed_plugin=deepspeed_plugin, 
         **accelerator_log_kwargs,
         kwargs_handlers=[timeout_kwargs],
-        mixed_precision = "bf16"
+        mixed_precision = "fp16"
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -134,55 +182,56 @@ def main(args: ArgumentParserPlus):
     accelerator.wait_for_everyone()
 
     # Initialize the training dataset
-    train_dataset = []
-    for i, data_mix in enumerate(data_args.dataset_train):
-        logger.info(
-            f"Creating training dataset {i + 1} from: {data_mix.get('root_dir', None)}"
+    with accelerator.main_process_first():
+        train_dataset = []
+        for i, data_mix in enumerate(data_args.dataset_train):
+            logger.info(
+                f"Creating training dataset {i + 1} from: {data_mix.get('root_dir', None)}"
+            )
+            pipeline_mix = data_mix.get("pipeline", None)
+            dataset = LocalDataset(
+                root_dir=Path(data_mix["root_dir"]),
+                pdf_dir_name=data_mix["pdf_dir_name"],
+                json_dir_name=data_mix["json_dir_name"],
+                pipeline_steps=pipeline_mix,
+            )
+
+            logger.info(f"Found {len(dataset)} samples")
+
+            if len(dataset) > 0:
+                train_dataset.append(dataset)
+
+        # Combine all training datasets
+        train_dataset = (
+            ConcatDataset(train_dataset) if len(train_dataset) > 1 else train_dataset[0]
         )
-        pipeline_mix = data_mix.get("pipeline", None)
-        dataset = LocalDataset(
-            root_dir=Path(data_mix["root_dir"]),
-            pdf_dir_name=data_mix["pdf_dir_name"],
-            json_dir_name=data_mix["json_dir_name"],
-            pipeline_steps=pipeline_mix,
-        )
+        logger.info(f"Total training samples: {len(train_dataset)}")
 
-        logger.info(f"Found {len(dataset)} samples")
+        # Initialize the evaluation dataset
+        data_collator = DataCollator(max_token_len=data_args.max_length)
 
-        if len(dataset) > 0:
-            train_dataset.append(dataset)
+        eval_dataloaders = {}
+        for i, data_mix in enumerate(data_args.dataset_eval):
+            logger.info(
+                f"Creating eval dataset {i + 1} from: {data_mix.get('root_dir', None)}"
+            )
+            pipeline_mix = data_mix.get("pipeline", None)
+            dataset = LocalDataset(
+                root_dir=Path(data_mix["root_dir"]),
+                pdf_dir_name=data_mix["pdf_dir_name"],
+                json_dir_name=data_mix["json_dir_name"],
+                pipeline_steps=pipeline_mix,
+            )
+            logger.info(f"Found {len(dataset)} samples")
 
-    # Combine all training datasets
-    train_dataset = (
-        ConcatDataset(train_dataset) if len(train_dataset) > 1 else train_dataset[0]
-    )
-    logger.info(f"Total training samples: {len(train_dataset)}")
+            dl = DataLoader(
+                dataset,
+                collate_fn=data_collator,
+                batch_size=exp_args.per_device_eval_batch_size,
+                shuffle=True
+            )
 
-    # Initialize the evaluation dataset
-    data_collator = DataCollator(max_token_len=data_args.max_length)
-
-    eval_dataloaders = {}
-    for i, data_mix in enumerate(data_args.dataset_eval):
-        logger.info(
-            f"Creating eval dataset {i + 1} from: {data_mix.get('root_dir', None)}"
-        )
-        pipeline_mix = data_mix.get("pipeline", None)
-        dataset = LocalDataset(
-            root_dir=Path(data_mix["root_dir"]),
-            pdf_dir_name=data_mix["pdf_dir_name"],
-            json_dir_name=data_mix["json_dir_name"],
-            pipeline_steps=pipeline_mix,
-        )
-        logger.info(f"Found {len(dataset)} samples")
-
-        dl = DataLoader(
-            dataset,
-            collate_fn=data_collator,
-            batch_size=exp_args.per_device_eval_batch_size,
-            shuffle=True
-        )
-
-        eval_dataloaders[data_mix.get("name", str(i))] = dl
+            eval_dataloaders[data_mix.get("name", str(i))] = dl
 
     # Log a few random samples from the training set:
     for index in random.sample(range(len(train_dataset)), 3):
@@ -326,6 +375,38 @@ def main(args: ArgumentParserPlus):
             optimizer_grouped_parameters,
             lr=float(exp_args.learning_rate),
         )
+    elif exp_args.optimizer == "muon":
+        # Separate parameters for Muon (hidden matrices) and Adam (embeddings, scalars, head)
+        hidden_matrix_params = [p for n, p in model.named_parameters() if p.ndim >= 2 and "embed" not in n and "lm_head" not in n]
+        embed_params = [p for n, p in model.named_parameters() if "embed" in n]
+        scalar_params = [p for p in model.parameters() if p.ndim < 2]
+        head_params = [p for n, p in model.named_parameters() if "lm_head" in n]
+
+        # Create Adam groups with different learning rates
+        adam_groups = [
+            dict(params=head_params, lr=float(exp_args.learning_rate) * 0.8, use_muon=False),
+            dict(params=embed_params, lr=float(exp_args.learning_rate) * 12.0, use_muon=False),
+            dict(params=scalar_params, lr=float(exp_args.learning_rate) * 0.8, use_muon=False),
+        ]
+
+        # Add Adam hyperparameters to groups
+        for g in adam_groups:
+            g["betas"] = (0.8, 0.95)
+            g["eps"] = float(1e-10)
+            g["weight_decay"] = 1e-10
+
+        # Create Muon group
+        muon_group = dict(
+            params=hidden_matrix_params,
+            lr=float(exp_args.learning_rate),
+            momentum=0.95,
+            weight_decay=1e-10,
+            use_muon=True,
+        )
+
+        # Combine all groups
+        param_groups = [*adam_groups, muon_group]
+        optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
     else:
         raise NotImplementedError(
             f"Optimizer {exp_args.optimizer} not supported in custom loop"
@@ -456,8 +537,8 @@ def main(args: ArgumentParserPlus):
             eval_dataloaders,
             accelerator
         )
-    accelerator.log(eval_metrics, step=completed_steps)
-    logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
+        accelerator.log(eval_metrics, step=completed_steps)
+        logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
 
     logger.info(f"Starting from epoch {starting_epoch} and step {completed_steps}.")
     logger.info(f"Total training steps: {max_train_steps}, Total samples to process: {max_train_samples}")
@@ -482,6 +563,8 @@ def main(args: ArgumentParserPlus):
         else:
             active_dataloader = train_dataloader
         
+        print("here")
+        
         for step, batch in enumerate(active_dataloader):
 
             batch = {k:v.to(accelerator.device) for k, v in batch.items()}
@@ -489,12 +572,16 @@ def main(args: ArgumentParserPlus):
             local_total_tokens += batch["attention_mask"].sum()
             total_token_including_padding += batch["attention_mask"].numel()
 
+            print("here")
+
             with accelerator.accumulate(model):
                 output = model(**batch)
                 loss = output.loss
             
                 total_loss += loss.detach().float()
                 accelerator.backward(loss)
+
+                print("here")
 
                 # Gradient clipping is not needed when using deepspeed
                 if not exp_args.use_deepspeed:
@@ -511,7 +598,7 @@ def main(args: ArgumentParserPlus):
                 progress_bar.update(1)
                 completed_steps += 1
 
-                if exp_args.eval_steps and completed_steps % exp_args.eval_steps == 0:
+                if completed_steps > 0 and exp_args.eval_steps and completed_steps % exp_args.eval_steps == 0:
                     if accelerator.is_main_process:
                         eval_metrics = evaluate_model(
                                     model,

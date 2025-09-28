@@ -108,7 +108,12 @@ class LocalDataset(Dataset):
 
             if name == "Tokenizer":
                 processor = step_config.pop("processor", None)
-                processor = AutoProcessor.from_pretrained(processor, max_pixels = 2048*2048, min_pixels = 224*224)
+                processor = AutoProcessor.from_pretrained(
+                    processor
+                )
+                processor.num_additional_image_tokens = 1
+                processor.num_additional_tokens = 1
+
                 step_class = str2PipelineStep.get(name)
                 step_instance = step_class(**step_config, processor=processor)
             else:
@@ -126,14 +131,9 @@ class LocalDataset(Dataset):
         Fetch a single item from the dataset by index
         """
         sample = self.dataset[idx]
-
-        print("processing", sample)
-
         for step in self.pipeline:
-            print("current pipeline step", step)
             sample = step(sample)
 
-        print("done processing", sample)
         return sample.model_inputs
 
 
@@ -229,6 +229,7 @@ if __name__ == "__main__":
     # numpy.set_printoptions(threshold=10_000)
 
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+    print(processor.tokenizer.padding_side)
 
     # print(
     #     processor(text = ["I am the prince of wales"], return_tensors="np",padding="max_length", max_length=200, )
@@ -241,7 +242,7 @@ if __name__ == "__main__":
 
     # print(processor.tokenizer.pad_token_id in dataset[0]['input_ids'])
 
-    # print(f"Dataset length: {len(dataset)}")
+    print(f"Dataset length: {len(dataset)}")
 
     dataloader = DataLoader(
         dataset,
@@ -254,9 +255,10 @@ if __name__ == "__main__":
 
     for sample in tqdm(iter(dataloader), total=len(dataset)):
 
-        print(sample['input_ids'].shape)
-        print(sample['attention_mask'].shape)
-        print(sample['labels'].shape)
+        # print(sample['input_ids'].shape)
+        # print(sample['attention_mask'].shape)
+        # print(sample['labels'].shape)
+        print(torch.sum(sample['attention_mask']))
         print("====================================")
 
     # print(f"Dataset samples: {dataset[0].user_messages}")

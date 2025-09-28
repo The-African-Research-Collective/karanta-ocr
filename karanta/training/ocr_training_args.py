@@ -193,7 +193,7 @@ class ModelArguments:
         default=False, metadata={"help": "Whether to use the LORA training"}
     )
     lora_rank: Optional[int] = field(
-        default=64, metadata={"help": "The rank of the LORA model"}
+        default=128, metadata={"help": "The rank of the LORA model"}
     )
     lora_alpha: Optional[float] = field(
         default=16,
