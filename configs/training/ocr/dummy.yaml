@@ -5,7 +5,7 @@ model_revision: main
 # Dataset configuration
 dataset_train:
   - name: dummy
-    root_dir: /home/oogundep/mock_training
+    root_dir: /teamspace/studios/this_studio/mock_training
     pdf_dir_name: pdf_inputs
     json_dir_name: json_outputs
     pipeline:
@@ -15,17 +15,17 @@ dataset_train:
       - name: StaticLengthDocumentAnchoring
         target_anchor_text_len: 4000
       - name: FinetuningPrompt
-        prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
+        prompt_path: /teamspace/studios/this_studio/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
       - name: InstructUserMessages
         prompt_first: true
       - name: Tokenizer
         processor: "Qwen/Qwen2.5-VL-3B-Instruct"
-        max_length: 8192
+        max_length: 6144
 
 dataset_eval:
   - name: dummy
-    root_dir: /home/oogundep/mock_training
+    root_dir: /teamspace/studios/this_studio/mock_training
     pdf_dir_name: pdf_inputs
     json_dir_name: json_outputs
     pipeline:
@@ -35,15 +35,15 @@ dataset_eval:
       - name: StaticLengthDocumentAnchoring
         target_anchor_text_len: 4000
       - name: FinetuningPrompt
-        prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
+        prompt_path: /teamspace/studios/this_studio/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
       - name: InstructUserMessages
         prompt_first: true
       - name: Tokenizer
         processor: "Qwen/Qwen2.5-VL-3B-Instruct"
-        max_length: 8192
+        max_length: 6144
 dataloader_num_workers: 1
-max_length: 8192
+max_length: 6144
 
 # Experiment Configuration
 exp_name: dummy
@@ -52,9 +52,9 @@ report_to:
   - wandb
 gradient_accumulation_steps: 4
 use_flash_attention: True
-output_dir: /home/oogundep/karanta-ocr/runs
-per_device_train_batch_size: 1
-per_device_eval_batch_size: 1
+output_dir: /teamspace/studios/this_studio/karanta-ocr/runs
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 4
 push_to_hub: true
 hf_entity: taresco
 reduce_loss: sum
@@ -66,6 +66,5 @@ eval_steps: 10
 checkpointing_steps: epoch
 use_deepspeed: true
 num_train_epochs: 1
-use_lora: True
-use_qlora: True
 optimizer: adamw_torch
+use_deepspeed: false

@@ -29,7 +29,7 @@ from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_tr
 
 
 import sys
-sys.path.append('/home/oogundep/karanta-ocr/')
+sys.path.append('/teamspace/studios/this_studio/karanta-ocr/')
 from karanta.training.utils import ArgumentParserPlus, get_last_checkpoint_path, clean_last_n_checkpoints, save_with_accelerate
 from karanta.training.ocr_training_args import (
     ExperimentArguments,
@@ -41,6 +41,22 @@ from karanta.training.muon_optimizer import SingleDeviceMuonWithAuxAdam
 
 load_dotenv()
 logger = get_logger(__name__)
+logger.setLevel(logging.INFO)
+
+def check_tokens_and_labels(input_ids: torch.Tensor, labels: torch.Tensor):
+    # Count total tokens in input_ids
+    total_tokens = input_ids.numel()
+    
+    # Find all non -100 items in labels
+    non_padding_mask = labels != -100
+    non_padding_items = labels[non_padding_mask]
+    valid_label_count = non_padding_items.numel()
+    
+    print(f"Total tokens in input_ids: {total_tokens}")
+    print(f"Valid labels (non -100): {valid_label_count}")
+    print(f"Percentage of valid labels: {(valid_label_count / total_tokens * 100):.2f}%")
+    
+    return total_tokens, valid_label_count, non_padding_items
 
 def evaluate_model(
     model: torch.nn.Module,
@@ -60,14 +76,16 @@ def evaluate_model(
                     continue
 
                 batch = {k: v.to(accelerator.device) for k, v in batch.items()}
+
                 with accelerator.autocast():
                     outputs = model(**batch)
                     batch_loss = outputs.loss.item()
 
-                    num_batches += 1
-                    total_loss += batch_loss
-                
-                break
+                    if torch.isnan(outputs.loss).sum().item() > 0:
+                        continue
+                    else:
+                        num_batches += 1
+                        total_loss += batch_loss
 
             eval_loss = total_loss/num_batches
             eval_metrics[f"{eval_set}_loss"] = eval_loss
@@ -108,55 +126,65 @@ def main(args: ArgumentParserPlus):
     dataloader_config = DataLoaderConfiguration()
     dataloader_config.use_seedable_sampler = True
 
-    deepspeed_config = {
-        "bf16": {
-            "enabled": "auto"
-        },
-        "offload_param": {
-            "device": "cpu",
-            "pin_memory": True
-        },
-        "offload_optimizer": {
-            "device": "cpu",
-            "pin_memory": True
-        },
-        "zero_optimization": {
-            "stage": 3,
-            "overlap_comm": True,
-            "contiguous_gradients": True,
-            "sub_group_size": 1e9,
-            "reduce_bucket_size": "auto",
-            "stage3_prefetch_bucket_size": "auto",
-            "stage3_param_persistence_threshold": "auto",
-            "stage3_max_live_parameters": 1e9,
-            "stage3_max_reuse_distance": 1e9,
-            "stage3_gather_16bit_weights_on_model_save": True
-        },
-        "gradient_accumulation_steps": "auto",
-        "gradient_clipping": "auto",
-        "steps_per_print": 1e5,
-        "train_batch_size": "auto",
-        "train_micro_batch_size_per_gpu": "auto",
-        "wall_clock_breakdown": False
-    }
-    
-    deepspeed_plugin = DeepSpeedPlugin(
-        hf_ds_config=deepspeed_config,
-        zero_stage=3,
-        gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
-        gradient_clipping="auto",
-        offload_optimizer_device="cpu",
-        offload_param_device="cpu",
-    )
+    if exp_args.use_deepspeed:
+        deepspeed_config = {
+            "bf16": {
+                "enabled": "auto"
+            },
+            "offload_param": {
+                "device": "cpu",
+                "pin_memory": True
+            },
+            "offload_optimizer": {
+                "device": "cpu",
+                "pin_memory": True
+            },
+            "zero_optimization": {
+                "stage": 3,
+                "overlap_comm": True,
+                "contiguous_gradients": True,
+                "sub_group_size": 1e9,
+                "reduce_bucket_size": "auto",
+                "stage3_prefetch_bucket_size": "auto",
+                "stage3_param_persistence_threshold": "auto",
+                "stage3_max_live_parameters": 1e9,
+                "stage3_max_reuse_distance": 1e9,
+                "stage3_gather_16bit_weights_on_model_save": True
+            },
+            "gradient_accumulation_steps": "auto",
+            "gradient_clipping": "auto",
+            "steps_per_print": 1e5,
+            "train_batch_size": "auto",
+            "train_micro_batch_size_per_gpu": "auto",
+            "wall_clock_breakdown": False
+        }
+        
+        deepspeed_plugin = DeepSpeedPlugin(
+            hf_ds_config=deepspeed_config,
+            zero_stage=3,
+            gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
+            gradient_clipping="auto",
+            offload_optimizer_device="cpu",
+            offload_param_device="cpu",
+        )
 
-    accelerator = Accelerator(
-        gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
-        dataloader_config=dataloader_config,
-        # deepspeed_plugin=deepspeed_plugin, 
-        **accelerator_log_kwargs,
-        kwargs_handlers=[timeout_kwargs],
-        mixed_precision = "fp16"
-    )
+        accelerator = Accelerator(
+            gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
+            dataloader_config=dataloader_config,
+            deepspeed_plugin=deepspeed_plugin, 
+            **accelerator_log_kwargs,
+            kwargs_handlers=[timeout_kwargs],
+            mixed_precision = "bf16"
+        )
+    else:
+        accelerator = Accelerator(
+            gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
+            dataloader_config=dataloader_config,
+            **accelerator_log_kwargs,
+            kwargs_handlers=[timeout_kwargs],
+            mixed_precision = "bf16"
+        )
+
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -230,7 +258,6 @@ def main(args: ArgumentParserPlus):
                 batch_size=exp_args.per_device_eval_batch_size,
                 shuffle=True
             )
-
             eval_dataloaders[data_mix.get("name", str(i))] = dl
 
     # Log a few random samples from the training set:
@@ -242,6 +269,7 @@ def main(args: ArgumentParserPlus):
         shuffle=True,
         collate_fn=data_collator,
         batch_size=exp_args.per_device_train_batch_size,
+        num_workers=data_args.dataloader_num_workers
     )
 
     # Initialize Model Config if not provided
@@ -258,9 +286,7 @@ def main(args: ArgumentParserPlus):
             trust_remote_code=model_args.trust_remote_code,
         )
     else:
-        raise ValueError(
-            "You need to specify either a model name or a model configuration name"
-        )
+        raise ValueError("You need to specify either a model name or a model configuration name")
 
     # Initialize the model
     if model_args.model_name_or_path:
@@ -285,7 +311,7 @@ def main(args: ArgumentParserPlus):
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
                 config=config,
                 trust_remote_code=model_args.trust_remote_code,
-                quantization_config=quantization_config,
+                quantization_config=quantization_config if model_args.use_qlora else {},
                 device_map=device_map,
                 attn_implementation="flash_attention_2"
                 if exp_args.use_flash_attention
@@ -298,6 +324,7 @@ def main(args: ArgumentParserPlus):
                 from_tf=bool(".ckpt" in model_args.model_name_or_path),
                 config=config,
                 trust_remote_code=model_args.trust_remote_code,
+                dtype=torch.bfloat16,
                 attn_implementation="flash_attention_2"
                 if exp_args.use_flash_attention
                 else "eager",
@@ -349,10 +376,9 @@ def main(args: ArgumentParserPlus):
         )
         logger.info("Model compilation complete")
 
-    # Load the optimizer
     # Set up optimizer
     if exp_args.optimizer == "adamw_torch":
-        no_decay = ["bias", "LayerNorm.weight"]
+        no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight", "ln_f.weight", "norm.weight"]
         optimizer_grouped_parameters = [
             {
                 "params": [
@@ -550,8 +576,6 @@ def main(args: ArgumentParserPlus):
 
         model.train()
         train_dataloader.set_epoch(epoch)
-
-        print("here")
         total_loss = 0
         local_total_tokens = 0
         total_token_including_padding = 0
@@ -563,16 +587,13 @@ def main(args: ArgumentParserPlus):
         else:
             active_dataloader = train_dataloader
         
-        print("here")
-        
         for step, batch in enumerate(active_dataloader):
 
             batch = {k:v.to(accelerator.device) for k, v in batch.items()}
+            check_tokens_and_labels(batch['input_ids'], batch['labels'])
 
             local_total_tokens += batch["attention_mask"].sum()
             total_token_including_padding += batch["attention_mask"].numel()
-
-            print("here")
 
             with accelerator.accumulate(model):
                 output = model(**batch)
@@ -580,8 +601,6 @@ def main(args: ArgumentParserPlus):
             
                 total_loss += loss.detach().float()
                 accelerator.backward(loss)
-
-                print("here")
 
                 # Gradient clipping is not needed when using deepspeed
                 if not exp_args.use_deepspeed:
@@ -616,7 +635,7 @@ def main(args: ArgumentParserPlus):
                     )
                     total_tokens = accelerator.gather(local_total_tokens).sum().item()
                     total_tokens_including_padding = (
-                        accelerator.gather(total_token_including_padding).sum().item()
+                        accelerator.gather(total_token_including_padding)
                     )
                     training_metrics_to_log = {
                         "learning_rate": lr_scheduler.get_last_lr()[0],
@@ -646,27 +665,27 @@ def main(args: ArgumentParserPlus):
                 accelerator.save_state(output_dir)
                 accelerator.wait_for_everyone()
 
-            if exp_args.output_dir is not None:
-                save_with_accelerate(
-                    accelerator,
-                    model,
-                    exp_args.output_dir,
-                    model_args.use_lora,
-                )
+    if exp_args.output_dir is not None:
+        save_with_accelerate(
+            accelerator,
+            model,
+            exp_args.output_dir,
+            model_args.use_lora,
+        )
 
-            # remove all checkpoints to save space
-            if accelerator.is_local_main_process:
-                clean_last_n_checkpoints(exp_args.output_dir, keep_last_n_checkpoints=0)
-            
-            # Final evaluation
-            if accelerator.is_local_main_process:
-                final_metrics = evaluate_model(model, eval_dataloaders, accelerator)
-                logger.info(f"Final evaluation metrics: {final_metrics}")
+    # remove all checkpoints to save space
+    if accelerator.is_local_main_process:
+        clean_last_n_checkpoints(exp_args.output_dir, keep_last_n_checkpoints=1)
+    
+    # Final evaluation
+    if accelerator.is_local_main_process:
+        final_metrics = evaluate_model(model, eval_dataloaders, accelerator)
+        logger.info(f"Final evaluation metrics: {final_metrics}")
 
-            accelerator.wait_for_everyone()
+    accelerator.wait_for_everyone()
 
-            if exp_args.with_tracking:
-                accelerator.end_training()
+    if exp_args.with_tracking:
+        accelerator.end_training()
 
 if __name__ == "__main__":
     parser = ArgumentParserPlus((ExperimentArguments, ModelArguments, DatasetArguments))

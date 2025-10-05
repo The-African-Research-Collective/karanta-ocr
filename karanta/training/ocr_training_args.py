@@ -251,7 +251,7 @@ class DatasetArguments:
         default=4,
         metadata={"help": "The number of workers to use for data loading."},
     )
-    max_length: Optional[int] = field(
+    max_length: int = field(
         default=8192,
         metadata={
             "help": "The maximum sequence length for the model. "

@@ -30,6 +30,22 @@ str2PipelineStep = {
     "Tokenizer": Tokenizer,
 }
 
+def check_tokens_and_labels(input_ids, labels):
+    # Count total tokens in input_ids
+    total_tokens = input_ids.numel()
+    
+    # Find all non -100 items in labels
+    non_padding_mask = labels != -100
+    non_padding_items = labels[non_padding_mask]
+    valid_label_count = non_padding_items.numel()
+    
+    # Print results
+    print(f"Total tokens in input_ids: {total_tokens}")
+    print(f"Valid labels (non -100): {valid_label_count}")
+    print(f"Percentage of valid labels: {(valid_label_count / total_tokens * 100):.2f}%")
+    
+    return total_tokens, valid_label_count, non_padding_items
+
 
 def initialize_dataset(
     json_dir: Path, pdf_dir: Path, max_workers: Optional[int] = None
@@ -255,10 +271,12 @@ if __name__ == "__main__":
 
     for sample in tqdm(iter(dataloader), total=len(dataset)):
 
-        # print(sample['input_ids'].shape)
-        # print(sample['attention_mask'].shape)
-        # print(sample['labels'].shape)
+        print(sample['input_ids'].shape)
+        print(sample['attention_mask'].shape)
+        print(sample['labels'].shape)
         print(torch.sum(sample['attention_mask']))
+
+        check_tokens_and_labels(sample['input_ids'], sample['labels'])
         print("====================================")
 
     # print(f"Dataset samples: {dataset[0].user_messages}")
