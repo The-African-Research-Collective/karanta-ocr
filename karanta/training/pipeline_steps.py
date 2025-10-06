@@ -60,16 +60,16 @@ class JSONOutputFormat(BasePipelineStep):
     """Takes the output and applies the standard yaml formatting to it"""
 
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
-        page_data = sample.page_data
+        page_data_list = sample.page_data
         sample.response = json.dumps(
-            {
+            [{
                 "primary_language": page_data["primary_language"],
                 "is_rotation_valid": page_data["is_rotation_valid"],
                 "rotation_correction": page_data["rotation_correction"],
                 "is_table": page_data["is_table"],
                 "is_diagram": page_data["is_diagram"],
                 "natural_text": page_data["natural_text"],
-            },
+            } for page_data in page_data_list],
             ensure_ascii=False,
         )
         return sample
@@ -82,6 +82,17 @@ class FetchPageData(BasePipelineStep):
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
         with open(sample.json_path, "r", encoding="utf-8") as f:
             output_result = json.loads(json.loads(f.read())["result"]["text"])
+
+        sample.page_data = output_result
+        return sample
+
+@dataclass(frozen=True, slots=True)
+class FetchMultipageData(BasePipelineStep):
+    """Similar to FetchPageData but this is for multipage format"""
+
+    def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
+        with open(sample.json_path, "r", encoding="utf-8") as f:
+            output_result = json.loads(f.read())["generation"]["pages"]
 
         sample.page_data = output_result
         return sample

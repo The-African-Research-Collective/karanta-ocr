@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
 from typing import Dict
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, random_split
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -29,7 +29,7 @@ from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_tr
 
 
 import sys
-sys.path.append('/teamspace/studios/this_studio/karanta-ocr/')
+sys.path.append('/home/oogundep/karanta-ocr/')
 from karanta.training.utils import ArgumentParserPlus, get_last_checkpoint_path, clean_last_n_checkpoints, save_with_accelerate
 from karanta.training.ocr_training_args import (
     ExperimentArguments,
@@ -43,28 +43,18 @@ load_dotenv()
 logger = get_logger(__name__)
 logger.setLevel(logging.INFO)
 
-def check_tokens_and_labels(input_ids: torch.Tensor, labels: torch.Tensor):
-    # Count total tokens in input_ids
-    total_tokens = input_ids.numel()
-    
-    # Find all non -100 items in labels
-    non_padding_mask = labels != -100
-    non_padding_items = labels[non_padding_mask]
-    valid_label_count = non_padding_items.numel()
-    
-    print(f"Total tokens in input_ids: {total_tokens}")
-    print(f"Valid labels (non -100): {valid_label_count}")
-    print(f"Percentage of valid labels: {(valid_label_count / total_tokens * 100):.2f}%")
-    
-    return total_tokens, valid_label_count, non_padding_items
-
 def evaluate_model(
     model: torch.nn.Module,
-    eval_dataloader: Dict[str, DataLoader],
+    eval_dataloader: Dict[str, DataLoader] | DataLoader,
     accelerator
 ):
     model.eval()
     eval_metrics = {}
+
+    if isinstance(eval_dataloader, DataLoader):
+        test_dict = {}
+        test_dict['eval_split'] = eval_dataloader
+        eval_dataloader = test_dict
 
     with torch.no_grad():
         for eval_set, eval_set_dataloader in eval_dataloader.items():
@@ -76,16 +66,14 @@ def evaluate_model(
                     continue
 
                 batch = {k: v.to(accelerator.device) for k, v in batch.items()}
+                outputs = model(**batch)
+                batch_loss = outputs.loss.item()
 
-                with accelerator.autocast():
-                    outputs = model(**batch)
-                    batch_loss = outputs.loss.item()
-
-                    if torch.isnan(outputs.loss).sum().item() > 0:
-                        continue
-                    else:
-                        num_batches += 1
-                        total_loss += batch_loss
+                if torch.isnan(outputs.loss).sum().item() > 0:
+                    continue
+                else:
+                    num_batches += 1
+                    total_loss += batch_loss
 
             eval_loss = total_loss/num_batches
             eval_metrics[f"{eval_set}_loss"] = eval_loss
@@ -140,7 +128,7 @@ def main(args: ArgumentParserPlus):
                 "pin_memory": True
             },
             "zero_optimization": {
-                "stage": 3,
+                "stage": 2,
                 "overlap_comm": True,
                 "contiguous_gradients": True,
                 "sub_group_size": 1e9,
@@ -161,7 +149,7 @@ def main(args: ArgumentParserPlus):
         
         deepspeed_plugin = DeepSpeedPlugin(
             hf_ds_config=deepspeed_config,
-            zero_stage=3,
+            zero_stage=2,
             gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
             gradient_clipping="auto",
             offload_optimizer_device="cpu",
@@ -234,31 +222,43 @@ def main(args: ArgumentParserPlus):
             ConcatDataset(train_dataset) if len(train_dataset) > 1 else train_dataset[0]
         )
         logger.info(f"Total training samples: {len(train_dataset)}")
-
-        # Initialize the evaluation dataset
         data_collator = DataCollator(max_token_len=data_args.max_length)
 
-        eval_dataloaders = {}
-        for i, data_mix in enumerate(data_args.dataset_eval):
-            logger.info(
-                f"Creating eval dataset {i + 1} from: {data_mix.get('root_dir', None)}"
-            )
-            pipeline_mix = data_mix.get("pipeline", None)
-            dataset = LocalDataset(
-                root_dir=Path(data_mix["root_dir"]),
-                pdf_dir_name=data_mix["pdf_dir_name"],
-                json_dir_name=data_mix["json_dir_name"],
-                pipeline_steps=pipeline_mix,
-            )
-            logger.info(f"Found {len(dataset)} samples")
+        if not data_args.dataset_eval:
+            data_generator = torch.Generator().manual_seed(exp_args.seed)
+            train_dataset, eval_dataset = random_split(train_dataset, [0.9, 0.1])
+            eval_dataloaders = {}
+            eval_dl = DataLoader(
+                            eval_dataset,
+                            collate_fn=data_collator,
+                            batch_size=exp_args.per_device_eval_batch_size,
+                            shuffle=True,
+                        )
+            eval_dataloaders['eval_split'] = accelerator.prepare(eval_dl)
+                                            
+        else:
+            # Initialize the evaluation dataset
+            eval_dataloaders = {}
+            for i, data_mix in enumerate(data_args.dataset_eval):
+                logger.info(
+                    f"Creating eval dataset {i + 1} from: {data_mix.get('root_dir', None)}"
+                )
+                pipeline_mix = data_mix.get("pipeline", None)
+                dataset = LocalDataset(
+                    root_dir=Path(data_mix["root_dir"]),
+                    pdf_dir_name=data_mix["pdf_dir_name"],
+                    json_dir_name=data_mix["json_dir_name"],
+                    pipeline_steps=pipeline_mix,
+                )
+                logger.info(f"Found {len(dataset)} samples")
 
-            dl = DataLoader(
-                dataset,
-                collate_fn=data_collator,
-                batch_size=exp_args.per_device_eval_batch_size,
-                shuffle=True
-            )
-            eval_dataloaders[data_mix.get("name", str(i))] = dl
+                eval_dl = DataLoader(
+                    dataset,
+                    collate_fn=data_collator,
+                    batch_size=exp_args.per_device_eval_batch_size,
+                    shuffle=True
+                )
+                eval_dataloaders[data_mix.get("name", str(i))] = accelerator.prepare(eval_dl)
 
     # Log a few random samples from the training set:
     for index in random.sample(range(len(train_dataset)), 3):
@@ -454,7 +454,6 @@ def main(args: ArgumentParserPlus):
         optimizer=optimizer,
         num_warmup_steps=int(max_train_steps * exp_args.warmup_ratio),
         num_training_steps=max_train_steps,
-        # scheduler_specific_kwargs=exp_args.lr_scheduler_kwargs,
     )
 
     # Prepare everything with `accelerator`.
@@ -590,8 +589,6 @@ def main(args: ArgumentParserPlus):
         for step, batch in enumerate(active_dataloader):
 
             batch = {k:v.to(accelerator.device) for k, v in batch.items()}
-            check_tokens_and_labels(batch['input_ids'], batch['labels'])
-
             local_total_tokens += batch["attention_mask"].sum()
             total_token_including_padding += batch["attention_mask"].numel()
 
@@ -604,7 +601,7 @@ def main(args: ArgumentParserPlus):
 
                 # Gradient clipping is not needed when using deepspeed
                 if not exp_args.use_deepspeed:
-                    if accelerator.sync_gradients and exp_args.clip_grad_norm > 0:
+                    if accelerator.sync_gradients and exp_args.max_norm > 0:
                         accelerator.clip_grad_norm_(
                             model.parameters(), exp_args.max_norm
                         )
@@ -626,6 +623,7 @@ def main(args: ArgumentParserPlus):
                                 )
                         accelerator.log(eval_metrics, step=completed_steps)
                         logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
+                        model.train()
 
                 if exp_args.logging_steps and completed_steps % exp_args.logging_steps == 0:
                     avg_loss = (
@@ -634,9 +632,10 @@ def main(args: ArgumentParserPlus):
                         / exp_args.logging_steps
                     )
                     total_tokens = accelerator.gather(local_total_tokens).sum().item()
-                    total_tokens_including_padding = (
-                        accelerator.gather(total_token_including_padding)
-                    )
+                    total_tokens_including_padding = accelerator.reduce(
+                        torch.tensor(total_token_including_padding, device=accelerator.device),
+                        reduction="sum"
+                    ).item()
                     training_metrics_to_log = {
                         "learning_rate": lr_scheduler.get_last_lr()[0],
                         "train_loss": avg_loss,
@@ -674,11 +673,11 @@ def main(args: ArgumentParserPlus):
         )
 
     # remove all checkpoints to save space
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         clean_last_n_checkpoints(exp_args.output_dir, keep_last_n_checkpoints=1)
     
     # Final evaluation
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         final_metrics = evaluate_model(model, eval_dataloaders, accelerator)
         logger.info(f"Final evaluation metrics: {final_metrics}")
 

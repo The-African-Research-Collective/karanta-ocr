@@ -18,6 +18,7 @@ from karanta.training.pipeline_steps import (
     FinetuningPrompt,
     InstructUserMessages,
     Tokenizer,
+    FetchMultipageData
 )
 
 str2PipelineStep = {
@@ -28,6 +29,7 @@ str2PipelineStep = {
     "FinetuningPrompt": FinetuningPrompt,
     "InstructUserMessages": InstructUserMessages,
     "Tokenizer": Tokenizer,
+    "FetchMultipageData": FetchMultipageData
 }
 
 def check_tokens_and_labels(input_ids, labels):
@@ -61,9 +63,13 @@ def initialize_dataset(
             # Check that json text loads successfully
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
-                    _ = json.loads(json.loads(f.read())["result"]["text"])
-            except (json.JSONDecodeError, KeyError):
+                    _ = json.loads(f.read())["generation"]["pages"]
+            except (json.JSONDecodeError, KeyError, TypeError):
                 print(f"Error reading JSON file: {json_file}")
+
+                with open("failed_files.txt", "a") as failed:
+                    failed.write(str(json_file) + "\n")
+
                 return None
 
             return json_file.stem, (pdf_file, json_file)
@@ -228,7 +234,7 @@ class DataCollator:
 
 
 if __name__ == "__main__":
-    all_config = load_yaml_config("configs/training/ocr/dummy.yaml")
+    all_config = load_yaml_config("configs/training/ocr/karanta_set_qwen_2_5_3B_vl.yaml")
     print(all_config)
     config = all_config["dataset_train"][0]
     pipeline = config["pipeline"]
@@ -267,17 +273,19 @@ if __name__ == "__main__":
         num_workers=all_config["dataloader_num_workers"],
     )
 
-    from tqdm import tqdm
+    next(iter(dataloader))
 
-    for sample in tqdm(iter(dataloader), total=len(dataset)):
+    # from tqdm import tqdm
 
-        print(sample['input_ids'].shape)
-        print(sample['attention_mask'].shape)
-        print(sample['labels'].shape)
-        print(torch.sum(sample['attention_mask']))
+    # for sample in tqdm(iter(dataloader), total=len(dataset)):
 
-        check_tokens_and_labels(sample['input_ids'], sample['labels'])
-        print("====================================")
+    #     print(sample['input_ids'].shape)
+    #     print(sample['attention_mask'].shape)
+    #     print(sample['labels'].shape)
+    #     print(torch.sum(sample['attention_mask']))
+
+    #     check_tokens_and_labels(sample['input_ids'], sample['labels'])
+    #     print("====================================")
 
     # print(f"Dataset samples: {dataset[0].user_messages}")
 
