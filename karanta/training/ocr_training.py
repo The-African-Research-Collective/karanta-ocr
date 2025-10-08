@@ -210,6 +210,7 @@ def main(args: ArgumentParserPlus):
                 pdf_dir_name=data_mix["pdf_dir_name"],
                 json_dir_name=data_mix["json_dir_name"],
                 pipeline_steps=pipeline_mix,
+                num_samples=data_args.num_samples
             )
 
             logger.info(f"Found {len(dataset)} samples")
@@ -222,11 +223,11 @@ def main(args: ArgumentParserPlus):
             ConcatDataset(train_dataset) if len(train_dataset) > 1 else train_dataset[0]
         )
         logger.info(f"Total training samples: {len(train_dataset)}")
-        data_collator = DataCollator(max_token_len=data_args.max_length)
+        data_collator = DataCollator(model_args.model_name_or_path, max_token_len=data_args.max_length)
 
         if not data_args.dataset_eval:
             data_generator = torch.Generator().manual_seed(exp_args.seed)
-            train_dataset, eval_dataset = random_split(train_dataset, [0.9, 0.1])
+            train_dataset, eval_dataset = random_split(train_dataset, [0.95, 0.05])
             eval_dataloaders = {}
             eval_dl = DataLoader(
                             eval_dataset,
@@ -234,7 +235,7 @@ def main(args: ArgumentParserPlus):
                             batch_size=exp_args.per_device_eval_batch_size,
                             shuffle=True,
                         )
-            eval_dataloaders['eval_split'] = accelerator.prepare(eval_dl)
+            eval_dataloaders['eval_split'] = eval_dl
                                             
         else:
             # Initialize the evaluation dataset
@@ -258,7 +259,7 @@ def main(args: ArgumentParserPlus):
                     batch_size=exp_args.per_device_eval_batch_size,
                     shuffle=True
                 )
-                eval_dataloaders[data_mix.get("name", str(i))] = accelerator.prepare(eval_dl)
+                eval_dataloaders[data_mix.get("name", str(i))] = eval_dl
 
     # Log a few random samples from the training set:
     for index in random.sample(range(len(train_dataset)), 3):
@@ -557,6 +558,7 @@ def main(args: ArgumentParserPlus):
 
     # Evaluate before training
     if accelerator.is_main_process:
+        print(accelerator.is_main_process)
         eval_metrics = evaluate_model(
             model,
             eval_dataloaders,
@@ -587,6 +589,9 @@ def main(args: ArgumentParserPlus):
             active_dataloader = train_dataloader
         
         for step, batch in enumerate(active_dataloader):
+
+            if batch is None:
+                continue
 
             batch = {k:v.to(accelerator.device) for k, v in batch.items()}
             local_total_tokens += batch["attention_mask"].sum()

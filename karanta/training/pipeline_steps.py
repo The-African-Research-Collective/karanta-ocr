@@ -132,11 +132,11 @@ class FinetuningPrompt(BasePipelineStep):
 
             if image_page:
                 prompt_template_dict["system"] = Template(
-                    prompt_template_dict["newspaper_system"]
+                    prompt_template_dict["olmo_ocr_system_prompt"]
                 )
             else:
                 prompt_template_dict["system"] = Template(
-                    prompt_template_dict["system"]
+                    prompt_template_dict["olmo_ocr_system_prompt"]
                 )
 
         sample.instruction_prompt = prompt_template_dict["system"].render(
@@ -202,7 +202,7 @@ class Tokenizer(BasePipelineStep):
     )  # Standard PyTorch value for ignoring tokens in loss calculation
     end_of_message_token: str = "<|im_end|>"  # Configurable, defaults to Qwen format
 
-    def _pad_sequence(self, sequence: np.ndarray, pad_value: int) -> np.ndarray:
+    def _pad_sequence(self, sequence, pad_value: int) -> np.ndarray:
         """
         Pad a sequence to the specified maximum length.
 
@@ -242,8 +242,6 @@ class Tokenizer(BasePipelineStep):
         Returns:
             The same sample with model_inputs populated with tokenized data
         """
-
-        self.processor.num_additional_tokens = 1
 
         # === DATA EXTRACTION ===
         # Extract the core components of our OCR training sample
@@ -288,7 +286,7 @@ class Tokenizer(BasePipelineStep):
         inputs = self.processor(
             text=[text],  # The formatted extraction instruction
             images=[main_image],  # The document image to process
-            padding=True,  # Pad sequences to same length
+            padding=False,  # Pad sequences to same length
             return_tensors="pt",  # Return NumPy arrays
         )
 
@@ -296,7 +294,7 @@ class Tokenizer(BasePipelineStep):
         # Tokenize the target structured text output (XML/JSON/YAML format)
         # This is what the model should learn to generate from the document image
         # Examples: JSON with extracted fields, XML with document structure, YAML with metadata
-        labels = self.processor(text=[response], padding=True, return_tensors="pt")
+        labels = self.processor(text=[response], padding=False, return_tensors="pt")
 
         # === END-OF-EXTRACTION TOKEN HANDLING ===
         # Add special token to mark where the model should stop generating structured output
@@ -349,11 +347,11 @@ class Tokenizer(BasePipelineStep):
         # === LABEL PADDING ===
         # Pad labels to the maximum length expected by the model
 
-        input_ids = self._pad_sequence(
-            input_ids, pad_value=self.processor.tokenizer.pad_token_id
-        )
-        attention_mask = self._pad_sequence(attention_mask, pad_value=0)
-        labels_full = self._pad_sequence(labels_full, pad_value=self.masking_index)
+        # input_ids = self._pad_sequence(
+        #     input_ids, pad_value=self.processor.tokenizer.pad_token_id
+        # )
+        # attention_mask = self._pad_sequence(attention_mask, pad_value=0)
+        # labels_full = self._pad_sequence(labels_full, pad_value=self.masking_index)
 
         # === OUTPUT ASSEMBLY ====
         # Package all processed data into the format expected by the OCR model trainer

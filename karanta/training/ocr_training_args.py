@@ -258,3 +258,9 @@ class DatasetArguments:
             "Sequences will be truncated to this length."
         },
     )
+    num_samples: int = field(
+        default=-1,
+        metadata={
+            "help": "Total number of samples to use in training"
+        }
+    )

@@ -94,11 +94,12 @@ reduce_loss: sum
 report_to: wandb
 wandb_project_name: karanta
 wandb_entity: african-research-collective
-logging_steps: 500
-eval_steps: 500
+logging_steps: 100
+eval_steps: 100
 checkpointing_steps: epoch
 use_deepspeed: true
 num_train_epochs: 3
 optimizer: adamw_torch
 use_deepspeed: true
 lr_scheduler_type: cosine
+num_samples: 1000
