@@ -367,3 +367,8 @@ def clean_last_n_checkpoints(output_dir: str, keep_last_n_checkpoints: int) -> N
             logger.info(f"Removing checkpoint {checkpoint}")
             shutil.rmtree(os.path.join(output_dir, checkpoint))
     logger.info("Remaining files:" + str(os.listdir(output_dir)))
+
+
+
+if __name__ == '__main__':
+    print(get_last_checkpoint("/home/oogundep/karanta-ocr/runs/karanta_full_set_qwen_2_5_3B_vl", True))

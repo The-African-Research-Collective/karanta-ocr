@@ -29,13 +29,10 @@ class ExperimentArguments:
         default=500,
         metadata={"help": "Run an evaluation every n steps."},
     )
-    report_to: Union[str, List[str]] = field(
-        default="all",
+    profile_steps: Optional[int] = field(
+        default=10,
         metadata={
-            "help": "The integration(s) to report results and logs to. "
-            "Can be a single string or a list of strings. "
-            "Options are 'tensorboard', 'wandb', 'comet_ml', 'clearml', or 'all'. "
-            "Specify multiple by listing them: e.g., ['tensorboard', 'wandb']"
+            "help": "Run profiler for these steps. Should be a comma separated list of two integers."
         },
     )
     optimizer: str = field(
@@ -159,6 +156,9 @@ class ExperimentArguments:
         metadata={
             "help": "Clip gradient norm. Not compatible with deepspeed (use deepspeed config instead)."
         },
+    )
+    is_profile: bool = field(
+        default=False, metadata={"help": "Whether to enable profiling for the run"}
     )
     
 

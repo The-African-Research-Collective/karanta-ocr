@@ -4,6 +4,7 @@ import random
 import logging
 import torch
 import math
+import wandb
 import deepspeed
 import transformers
 
@@ -12,11 +13,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 from tqdm import tqdm
 from typing import Dict
+from contextlib import nullcontext
 from torch.utils.data import ConcatDataset, DataLoader, random_split
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from accelerate.utils import InitProcessGroupKwargs, set_seed, DataLoaderConfiguration, DeepSpeedPlugin
+from accelerate.utils import InitProcessGroupKwargs, set_seed, DataLoaderConfiguration, DeepSpeedPlugin, ProfileKwargs
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -46,7 +48,9 @@ logger.setLevel(logging.INFO)
 def evaluate_model(
     model: torch.nn.Module,
     eval_dataloader: Dict[str, DataLoader] | DataLoader,
-    accelerator
+    accelerator,
+    is_profile: bool = False,
+    cm = nullcontext()
 ):
     model.eval()
     eval_metrics = {}
@@ -57,31 +61,37 @@ def evaluate_model(
         eval_dataloader = test_dict
 
     with torch.no_grad():
-        for eval_set, eval_set_dataloader in eval_dataloader.items():
-            total_loss = 0.0
-            num_batches = 0
+        with cm  as prof:
+            for eval_set, eval_set_dataloader in eval_dataloader.items():
+                total_loss = 0.0
+                num_batches = 0
 
-            for batch in tqdm(eval_set_dataloader, desc=f"Evaluating {eval_set}"):
-                if batch is None:
-                    continue
+                for batch in tqdm(eval_set_dataloader, desc=f"Evaluating {eval_set}"):
+                    if batch is None:
+                        continue
 
-                batch = {k: v.to(accelerator.device) for k, v in batch.items()}
-                outputs = model(**batch)
-                batch_loss = outputs.loss.item()
+                    batch = {k: v.to(accelerator.device) for k, v in batch.items()}
+                    outputs = model(**batch)
+                    batch_loss = outputs.loss.item()
 
-                if torch.isnan(outputs.loss).sum().item() > 0:
-                    continue
-                else:
-                    num_batches += 1
-                    total_loss += batch_loss
+                    if torch.isnan(outputs.loss).sum().item() > 0:
+                        continue
+                    else:
+                        num_batches += 1
+                        total_loss += batch_loss
 
-            eval_loss = total_loss/num_batches
-            eval_metrics[f"{eval_set}_loss"] = eval_loss
+                eval_loss = total_loss/num_batches
+                eval_metrics[f"{eval_set}_loss"] = eval_loss
+            
+            # Average eval loss across all datasets
+            eval_loss = sum(eval_metrics.values()) / len(eval_metrics)
+            eval_metrics['eval_loss'] = eval_loss
+    
+    if is_profile and prof is not None:
+        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+        print(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=10))
         
-        # Average eval loss across all datasets
-        eval_loss = sum(eval_metrics.values()) / len(eval_metrics)
-        eval_metrics['eval_loss'] = eval_loss
-
     return eval_metrics
 
 
@@ -114,6 +124,20 @@ def main(args: ArgumentParserPlus):
     dataloader_config = DataLoaderConfiguration()
     dataloader_config.use_seedable_sampler = True
 
+    if exp_args.is_profile:
+        profile_kwargs = ProfileKwargs(
+            activities=["cpu", "cuda"],
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+            with_flops=True,
+            with_modules=True,
+        )
+        all_kwargs = [timeout_kwargs, profile_kwargs]
+        exp_args.num_train_epochs = 1  # when profiling, only do one epoch        
+    else:
+        all_kwargs = [timeout_kwargs]
+        
     if exp_args.use_deepspeed:
         deepspeed_config = {
             "bf16": {
@@ -161,7 +185,7 @@ def main(args: ArgumentParserPlus):
             dataloader_config=dataloader_config,
             deepspeed_plugin=deepspeed_plugin, 
             **accelerator_log_kwargs,
-            kwargs_handlers=[timeout_kwargs],
+            kwargs_handlers=all_kwargs,
             mixed_precision = "bf16"
         )
     else:
@@ -169,9 +193,15 @@ def main(args: ArgumentParserPlus):
             gradient_accumulation_steps=exp_args.gradient_accumulation_steps,
             dataloader_config=dataloader_config,
             **accelerator_log_kwargs,
-            kwargs_handlers=[timeout_kwargs],
+            kwargs_handlers=all_kwargs,
             mixed_precision = "bf16"
         )
+    
+    if exp_args.is_profile:
+        cm  = accelerator.profile()
+    else:
+        cm = nullcontext()
+
 
 
     # Make one log on every process with the configuration for debugging.
@@ -534,7 +564,7 @@ def main(args: ArgumentParserPlus):
     starting_epoch = 0
 
     # Potentially load in the weights and states from a previous save
-    last_checkpoint_path = get_last_checkpoint_path(exp_args)
+    last_checkpoint_path = get_last_checkpoint_path(exp_args, True)
     if last_checkpoint_path:
         accelerator.print(f"Resumed from checkpoint: {last_checkpoint_path}")
         accelerator.load_state(last_checkpoint_path)
@@ -555,14 +585,18 @@ def main(args: ArgumentParserPlus):
             starting_epoch = resume_step // len(train_dataloader)
             completed_steps = resume_step // exp_args.gradient_accumulation_steps
             resume_step -= starting_epoch * len(train_dataloader)
+    
+    if accelerator.is_main_process and exp_args.report_to == "wandb":
+        wandb.watch(model, log="all", log_freq=exp_args.logging_steps)
 
     # Evaluate before training
     if accelerator.is_main_process:
-        print(accelerator.is_main_process)
         eval_metrics = evaluate_model(
             model,
             eval_dataloaders,
-            accelerator
+            accelerator,
+            is_profile=exp_args.is_profile,
+            cm=cm
         )
         accelerator.log(eval_metrics, step=completed_steps)
         logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
@@ -588,86 +622,101 @@ def main(args: ArgumentParserPlus):
         else:
             active_dataloader = train_dataloader
         
-        for step, batch in enumerate(active_dataloader):
+        with cm  as prof:
 
-            if batch is None:
-                continue
+            for step, batch in enumerate(active_dataloader):
 
-            batch = {k:v.to(accelerator.device) for k, v in batch.items()}
-            local_total_tokens += batch["attention_mask"].sum()
-            total_token_including_padding += batch["attention_mask"].numel()
+                if batch is None:
+                    continue
 
-            with accelerator.accumulate(model):
-                output = model(**batch)
-                loss = output.loss
-            
-                total_loss += loss.detach().float()
-                accelerator.backward(loss)
+                batch = {k:v.to(accelerator.device) for k, v in batch.items()}
+                local_total_tokens += batch["attention_mask"].sum()
+                total_token_including_padding += batch["attention_mask"].numel()
 
-                # Gradient clipping is not needed when using deepspeed
-                if not exp_args.use_deepspeed:
-                    if accelerator.sync_gradients and exp_args.max_norm > 0:
-                        accelerator.clip_grad_norm_(
-                            model.parameters(), exp_args.max_norm
-                        )
+                with accelerator.accumulate(model):
+                    output = model(**batch)
+                    loss = output.loss
                 
-                optimizer.step()
-                optimizer.zero_grad()
-                lr_scheduler.step()
-            
-            if accelerator.sync_gradients:
-                progress_bar.update(1)
-                completed_steps += 1
+                    total_loss += loss.detach().float()
+                    accelerator.backward(loss)
 
-                if completed_steps > 0 and exp_args.eval_steps and completed_steps % exp_args.eval_steps == 0:
-                    if accelerator.is_main_process:
-                        eval_metrics = evaluate_model(
-                                    model,
-                                    eval_dataloaders,
-                                    accelerator
-                                )
-                        accelerator.log(eval_metrics, step=completed_steps)
-                        logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
-                        model.train()
-
-                if exp_args.logging_steps and completed_steps % exp_args.logging_steps == 0:
-                    avg_loss = (
-                        accelerator.gather(total_loss).mean().item()
-                        / exp_args.gradient_accumulation_steps
-                        / exp_args.logging_steps
-                    )
-                    total_tokens = accelerator.gather(local_total_tokens).sum().item()
-                    total_tokens_including_padding = accelerator.reduce(
-                        torch.tensor(total_token_including_padding, device=accelerator.device),
-                        reduction="sum"
-                    ).item()
-                    training_metrics_to_log = {
-                        "learning_rate": lr_scheduler.get_last_lr()[0],
-                        "train_loss": avg_loss,
-                        "total_tokens": total_tokens,
-                        "per_device_tps": total_tokens
-                        / accelerator.num_processes
-                        / (time.time() - start_time),
-                        "total_tokens_including_padding": total_tokens_including_padding,
-                        "per_device_tps_including_padding": total_tokens_including_padding
-                        / accelerator.num_processes
-                        / (time.time() - start_time),
-                    }
-
-                    logger.info(f"  Step: {completed_steps}, LR: {lr_scheduler.get_last_lr()[0]}, Loss: {avg_loss}, TPS: {total_tokens / (time.time() - start_time)}")
+                    # Gradient clipping is not needed when using deepspeed
+                    if not exp_args.use_deepspeed:
+                        if accelerator.sync_gradients and exp_args.max_norm > 0:
+                            accelerator.clip_grad_norm_(
+                                model.parameters(), exp_args.max_norm
+                            )
                     
-                    if exp_args.with_tracking:
-                        accelerator.log(training_metrics_to_log, step=completed_steps)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    lr_scheduler.step()
+                
+                if accelerator.sync_gradients:
+                    progress_bar.update(1)
+                    completed_steps += 1
 
-                    total_loss = 0
+                    if completed_steps > 0 and exp_args.eval_steps and completed_steps % exp_args.eval_steps == 0:
+                        if accelerator.is_main_process:
+                            eval_metrics = evaluate_model(
+                                        model,
+                                        eval_dataloaders,
+                                        accelerator
+                                    )
+                            accelerator.log(eval_metrics, step=completed_steps)
+                            logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
+                            model.train()
+                    
+                    if exp_args.is_profile and exp_args.profile_steps and completed_steps % exp_args.profile_steps == 0:
+                        if accelerator.is_main_process:
+                            # write profile results to output dir
+                            if exp_args.output_dir is not None:
+                                with open(os.path.join(exp_args.output_dir, f"profile_step_{completed_steps}.txt"), "w") as f:
+                                    f.write(prof.key_averages().table(sort_by="cpu_time_total", row_limit=15))
+                                    f.write("\n\n")
+                                    f.write(prof.key_averages().table(sort_by="cuda_time_total", row_limit=15))
+                                    f.write("\n\n")
+                                    f.write(prof.key_averages().table(sort_by="cuda_memory_usage", row_limit=15))
+                                    f.write("\n\n")
+                        break
 
-            if completed_steps > 0 and completed_steps % checkpointing_steps == 0:
-                output_dir = f"step_{completed_steps}"
-                if exp_args.output_dir is not None:
-                    output_dir = os.path.join(exp_args.output_dir, output_dir)
+                    if exp_args.logging_steps and completed_steps % exp_args.logging_steps == 0:
+                        avg_loss = (
+                            accelerator.gather(total_loss).mean().item()
+                            / exp_args.gradient_accumulation_steps
+                            / exp_args.logging_steps
+                        )
+                        total_tokens = accelerator.gather(local_total_tokens).sum().item()
+                        total_tokens_including_padding = accelerator.reduce(
+                            torch.tensor(total_token_including_padding, device=accelerator.device),
+                            reduction="sum"
+                        ).item()
+                        training_metrics_to_log = {
+                            "learning_rate": lr_scheduler.get_last_lr()[0],
+                            "train_loss": avg_loss,
+                            "total_tokens": total_tokens,
+                            "per_device_tps": total_tokens
+                            / accelerator.num_processes
+                            / (time.time() - start_time),
+                            "total_tokens_including_padding": total_tokens_including_padding,
+                            "per_device_tps_including_padding": total_tokens_including_padding
+                            / accelerator.num_processes
+                            / (time.time() - start_time),
+                        }
 
-                accelerator.save_state(output_dir)
-                accelerator.wait_for_everyone()
+                        logger.info(f"  Step: {completed_steps}, LR: {lr_scheduler.get_last_lr()[0]}, Loss: {avg_loss}, TPS: {total_tokens / (time.time() - start_time)}")
+                        
+                        if exp_args.with_tracking:
+                            accelerator.log(training_metrics_to_log, step=completed_steps)
+
+                        total_loss = 0
+
+                if completed_steps > 0 and completed_steps % checkpointing_steps == 0:
+                    output_dir = f"step_{completed_steps}"
+                    if exp_args.output_dir is not None:
+                        output_dir = os.path.join(exp_args.output_dir, output_dir)
+
+                    accelerator.save_state(output_dir)
+                    accelerator.wait_for_everyone()
 
     if exp_args.output_dir is not None:
         save_with_accelerate(
@@ -679,7 +728,7 @@ def main(args: ArgumentParserPlus):
 
     # remove all checkpoints to save space
     if accelerator.is_main_process:
-        clean_last_n_checkpoints(exp_args.output_dir, keep_last_n_checkpoints=1)
+        clean_last_n_checkpoints(exp_args.output_dir, keep_last_n_checkpoints=2)
     
     # Final evaluation
     if accelerator.is_main_process:
