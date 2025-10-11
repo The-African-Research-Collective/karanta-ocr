@@ -12,8 +12,6 @@ dataset_train:
       - name: PDF2ImageStep
         target_longest_image_dim: 1288
       - name: FetchMultipageData
-      - name: StaticLengthDocumentAnchoring
-        target_anchor_text_len: 4000
       - name: FinetuningPrompt
         prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
@@ -30,8 +28,6 @@ dataset_train:
       - name: PDF2ImageStep
         target_longest_image_dim: 1288
       - name: FetchMultipageData
-      - name: StaticLengthDocumentAnchoring
-        target_anchor_text_len: 4000
       - name: FinetuningPrompt
         prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
@@ -48,8 +44,6 @@ dataset_train:
       - name: PDF2ImageStep
         target_longest_image_dim: 1288
       - name: FetchMultipageData
-      - name: StaticLengthDocumentAnchoring
-        target_anchor_text_len: 4000
       - name: FinetuningPrompt
         prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
@@ -66,8 +60,6 @@ dataset_train:
       - name: PDF2ImageStep
         target_longest_image_dim: 1288
       - name: FetchMultipageData
-      - name: StaticLengthDocumentAnchoring
-        target_anchor_text_len: 4000
       - name: FinetuningPrompt
         prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
@@ -78,6 +70,7 @@ dataset_train:
         max_length: 6144
 dataloader_num_workers: 1
 max_length: 6144
+data_cache_folder_name: processed_no_anchor
 
 # Experiment Configuration
 exp_name: karanta_set_qwen_2_5_3B_vl_1000_linear

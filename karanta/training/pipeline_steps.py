@@ -12,7 +12,6 @@ from jinja2 import Template
 from PIL import Image
 from io import BytesIO
 from typing import Any
-from concurrent.futures import ThreadPoolExecutor
 
 from karanta.training.utils import SingleDatapoint
 from karanta.prompts.anchor import get_anchor_text
@@ -47,8 +46,6 @@ class PDF2ImageStep(BasePipelineStep):
         png_bytes = base64.b64decode(base64_png)
         image = Image.open(BytesIO(png_bytes))
 
-        
-
         # # Update sample
         sample.image = image
 
@@ -62,14 +59,17 @@ class JSONOutputFormat(BasePipelineStep):
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
         page_data_list = sample.page_data
         sample.response = json.dumps(
-            [{
-                "primary_language": page_data["primary_language"],
-                "is_rotation_valid": page_data["is_rotation_valid"],
-                "rotation_correction": page_data["rotation_correction"],
-                "is_table": page_data["is_table"],
-                "is_diagram": page_data["is_diagram"],
-                "natural_text": page_data["natural_text"],
-            } for page_data in page_data_list],
+            [
+                {
+                    "primary_language": page_data["primary_language"],
+                    "is_rotation_valid": page_data["is_rotation_valid"],
+                    "rotation_correction": page_data["rotation_correction"],
+                    "is_table": page_data["is_table"],
+                    "is_diagram": page_data["is_diagram"],
+                    "natural_text": page_data["natural_text"],
+                }
+                for page_data in page_data_list
+            ],
             ensure_ascii=False,
         )
         return sample
@@ -85,6 +85,7 @@ class FetchPageData(BasePipelineStep):
 
         sample.page_data = output_result
         return sample
+
 
 @dataclass(frozen=True, slots=True)
 class FetchMultipageData(BasePipelineStep):
@@ -124,24 +125,26 @@ class FinetuningPrompt(BasePipelineStep):
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
         image_page = True
 
-        if len(sample.anchor_text.split("\n")) > 10:
+        if sample.anchor_text and len(sample.anchor_text.split("\n")) > 10:
             image_page = False
+        else:
+            image_page = True
 
         with open(self.prompt_path, "r") as stream:
             prompt_template_dict = yaml.safe_load(stream)
 
             if image_page:
-                prompt_template_dict["system"] = Template(
-                    prompt_template_dict["olmo_ocr_system_prompt"]
-                )
+                prompt_template_dict["system"] = prompt_template_dict[
+                    "olmo_ocr_system_prompt_no_anchor"
+                ]
+                sample.instruction_prompt = prompt_template_dict["system"]
             else:
                 prompt_template_dict["system"] = Template(
                     prompt_template_dict["olmo_ocr_system_prompt"]
                 )
-
-        sample.instruction_prompt = prompt_template_dict["system"].render(
-            {"base_text": sample.anchor_text}
-        )
+                sample.instruction_prompt = prompt_template_dict["system"].render(
+                    {"base_text": sample.anchor_text}
+                )
         return sample
 
 
@@ -372,7 +375,8 @@ class Tokenizer(BasePipelineStep):
         # Some models need additional image processing metadata for document understanding
         # image_grid_thw typically contains height, width, and other document image dimensions
         # This helps with layout understanding and text region detection
-        if hasattr(inputs, "image_grid_thw"):
-            sample.model_inputs["image_grid_thw"] = inputs.image_grid_thw[0]
+
+        # if hasattr(inputs, "image_grid_thw"):
+        #     sample.model_inputs["image_grid_thw"] = inputs.image_grid_thw[0]
 
         return sample

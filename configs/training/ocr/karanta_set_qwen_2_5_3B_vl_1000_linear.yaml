@@ -78,6 +78,7 @@ dataset_train:
         max_length: 6144
 dataloader_num_workers: 1
 max_length: 6144
+data_cache_folder_name: processed
 
 # Experiment Configuration
 exp_name: karanta_set_qwen_2_5_3B_vl_1000_linear

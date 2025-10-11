@@ -5,7 +5,7 @@ model_revision: main
 # Dataset configuration
 dataset_train:
   - name: dummy
-    root_dir: /teamspace/studios/this_studio/mock_training
+    root_dir: /home/oogundep/mock_training
     pdf_dir_name: pdf_inputs
     json_dir_name: json_outputs
     pipeline:
@@ -15,7 +15,7 @@ dataset_train:
       - name: StaticLengthDocumentAnchoring
         target_anchor_text_len: 4000
       - name: FinetuningPrompt
-        prompt_path: /teamspace/studios/this_studio/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
+        prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
       - name: InstructUserMessages
         prompt_first: true
@@ -25,7 +25,7 @@ dataset_train:
 
 dataset_eval:
   - name: dummy
-    root_dir: /teamspace/studios/this_studio/mock_training
+    root_dir: /home/oogundep/mock_training
     pdf_dir_name: pdf_inputs
     json_dir_name: json_outputs
     pipeline:
@@ -35,7 +35,7 @@ dataset_eval:
       - name: StaticLengthDocumentAnchoring
         target_anchor_text_len: 4000
       - name: FinetuningPrompt
-        prompt_path: /teamspace/studios/this_studio/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
+        prompt_path: /home/oogundep/karanta-ocr/configs/prompts/open_ai_data_generation.yaml
       - name: JSONOutputFormat
       - name: InstructUserMessages
         prompt_first: true
@@ -52,9 +52,9 @@ report_to:
   - wandb
 gradient_accumulation_steps: 4
 use_flash_attention: True
-output_dir: /teamspace/studios/this_studio/karanta-ocr/runs
-per_device_train_batch_size: 2
-per_device_eval_batch_size: 4
+output_dir: /home/oogundep/karanta-ocr/runs
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
 push_to_hub: true
 hf_entity: taresco
 reduce_loss: sum
@@ -62,9 +62,10 @@ report_to: wandb
 wandb_project_name: karanta
 wandb_entity: african-research-collective
 logging_steps: 1
-eval_steps: 10
+eval_steps: 100
 checkpointing_steps: epoch
 use_deepspeed: true
 num_train_epochs: 1
 optimizer: adamw_torch
-use_deepspeed: false
+use_deepspeed: true
+lr_scheduler_type: cosine

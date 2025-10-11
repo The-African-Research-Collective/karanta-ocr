@@ -82,7 +82,7 @@ class ExperimentArguments:
         default=1,
         metadata={"help": "Batch size per GPU/TPU core/CPU for training."},
     )
-    per_device_eval_batch_size:  int = field(
+    per_device_eval_batch_size: int = field(
         default=1,
         metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."},
     )
@@ -160,7 +160,6 @@ class ExperimentArguments:
     is_profile: bool = field(
         default=False, metadata={"help": "Whether to enable profiling for the run"}
     )
-    
 
 
 @dataclass
@@ -259,8 +258,12 @@ class DatasetArguments:
         },
     )
     num_samples: int = field(
-        default=-1,
+        default=-1, metadata={"help": "Total number of samples to use in training"}
+    )
+    data_cache_folder_name: str = field(
+        default="data_cache",
         metadata={
-            "help": "Total number of samples to use in training"
-        }
+            "help": "The folder name to use for caching the dataset. "
+            "If the dataset is large, it is recommended to set this to a folder on disk with enough space."
+        },
     )
