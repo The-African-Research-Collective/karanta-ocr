@@ -12,7 +12,7 @@
 # ]
 #
 # [tool.uv.sources]
-# africanlanguages = { git = "https://github.com/theyorubayesian/africanlanguages.git" }
+# africanlanguages = { git = "https://github.com/The-African-Research-Collective/africanlanguages.git", rev = "b37d787c8d5cf8fac0571dac87e8214cb9e4716f" }
 # ///
 # Usage: uv run scripts/finepdf_download.py download-fineweb-african-pdfs --download-dir data/finepdfs -e dag_Latn -e pcm_Latn
 # Notes:
@@ -32,13 +32,14 @@ import pyarrow.parquet as pq
 from africanlanguages import AfricanLanguages
 from datasets import get_dataset_config_names, load_dataset, Dataset
 from huggingface_hub import snapshot_download
+from rich import print as rich_print
 from surt import surt
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from typer import Option, Typer
 from warcio.archiveiterator import ArchiveIterator
 
 # NOTE: This limits the number of downloads that happens at once
-download_semaphore = asyncio.Semaphore(5)
+download_semaphore = asyncio.Semaphore(10)
 
 app = Typer(no_args_is_help=True)
 
@@ -50,7 +51,7 @@ def deterministic_id(string: str) -> str:
 @retry(
     stop=stop_after_attempt(1000),
     wait=wait_fixed(1),
-    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, OSError)),
 )
 def query_commoncrawl_parquet(crawl_filepath: str, surt_key: str) -> dict | None:
     pf = pq.ParquetFile(crawl_filepath)
@@ -84,7 +85,7 @@ def query_commoncrawl_parquet(crawl_filepath: str, surt_key: str) -> dict | None
 @retry(
     stop=stop_after_attempt(1000),
     wait=wait_fixed(1),
-    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, OSError)),
 )
 async def get_record_length_from_warc_headers(
     session: aiohttp.ClientSession, warc_filename: str, offset: str
@@ -105,7 +106,7 @@ async def get_record_length_from_warc_headers(
 @retry(
     stop=stop_after_attempt(1000),
     wait=wait_fixed(1),
-    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, OSError)),
 )
 async def download_warc_record(
     download_path: str,
@@ -177,20 +178,28 @@ async def download_pdf(row: dict, download_dir: str) -> dict:
     return row
 
 
+@app.command()
 @lru_cache()
-def list_african_languages_in_finepdf() -> list[str]:
+def list_african_languages_in_finepdf(verbose: Annotated[bool, Option(help="If verbose, print african languages")] = False) -> list[str]:
     configs = get_dataset_config_names("HuggingFaceFW/finepdfs")
     finepdf_african_languages = [
         language
         for language in configs
         if language.split("_")[0].upper() in AfricanLanguages._member_names_
     ]
+
+    if verbose:
+        rich_print(finepdf_african_languages)
+
     return finepdf_african_languages
 
 
 @app.command()
 def download_hf_fineweb_african_data(
     download_dir: Annotated[str, Option(help="Directory to download data to")],
+    include_languages: Annotated[
+        str, Option("-i", "--include-language", help="Languages to include")
+    ] = None,
     exclude_languages: Annotated[
         list[str] | None,
         Option("-e", "--exclude-language", help="language codes to exclude"),
@@ -202,7 +211,12 @@ def download_hf_fineweb_african_data(
         allow_patterns=[
             f"data/{language}/**/*.parquet"
             for language in list_african_languages_in_finepdf()
-            if language not in exclude_languages
+            if (
+                # Either exclude_languages is Falsy or language is not in exclude_languages
+                (not exclude_languages or language not in exclude_languages)
+                # Either include_languages is Falsy or language is in include_languages
+                and (not include_languages or language in include_languages)
+            )
         ],
         local_dir=download_dir,
     )
@@ -211,6 +225,9 @@ def download_hf_fineweb_african_data(
 @app.command()
 def download_fineweb_african_pdfs(
     download_dir: Annotated[str, Option(help="Directory to download data to")],
+    include_languages: Annotated[
+        str, Option("-i", "--include-language", help="Languages to include")
+    ] = None,
     exclude_languages: Annotated[
         list[str] | None,
         Option("-e", "--exclude-language", help="language codes to exclude"),
@@ -219,7 +236,7 @@ def download_fineweb_african_pdfs(
     PDF_DOWNLOAD_FOLDER = os.path.join(download_dir, "pdfs")
 
     download_hf_fineweb_african_data(
-        download_dir=download_dir, exclude_languages=exclude_languages
+        download_dir=download_dir, include_languages=include_languages, exclude_languages=exclude_languages
     )
 
     ds: dict[str, Dataset] = load_dataset(
@@ -227,7 +244,12 @@ def download_fineweb_african_pdfs(
         data_files={
             language: f"{download_dir}/data/{language}/*/*.parquet"
             for language in list_african_languages_in_finepdf()
-            if language not in exclude_languages
+            if (
+                # Either exclude_languages is Falsy or language is in exclude_languages
+                (not exclude_languages or language not in exclude_languages)
+                # Either include_languages is Falsy or language is in include_languages
+                and (not include_languages or language in include_languages)
+            )
         },
     )
 
