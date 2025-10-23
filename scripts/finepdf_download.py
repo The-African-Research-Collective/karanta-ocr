@@ -47,6 +47,11 @@ def deterministic_id(string: str) -> str:
     return str(uuid.UUID(hashlib.md5(string).hexdigest()))
 
 
+@retry(
+    stop=stop_after_attempt(1000),
+    wait=wait_fixed(1),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+)
 def query_commoncrawl_parquet(crawl_filepath: str, surt_key: str) -> dict | None:
     pf = pq.ParquetFile(crawl_filepath)
 
