@@ -5,130 +5,167 @@
 #     "datasets",
 #     "datatrove",
 #     "huggingface_hub",
+#     "surt",
+#     "tenacity",
 #     "typer",
+#     "warcio",
 # ]
 #
 # [tool.uv.sources]
 # africanlanguages = { git = "https://github.com/theyorubayesian/africanlanguages.git" }
 # ///
 # Usage: uv run scripts/finepdf_download.py download-fineweb-african-pdfs --download-dir data/finepdfs -e dag_Latn -e pcm_Latn
-# Note that we ignore dag_Latn and pcm_Latn because the eye test shows most of the PDFs are not the correct language
-# And together they consititure 1.9M out of the 2.0M PDFs listed as African languages in FinePDF
-from __future__ import annotations
-
+# Notes:
+#   - We ignore dag_Latn and pcm_Latn because the eye test shows most of the PDFs are not the correct language
+#   - Together, they consititure 1.9M out of the 2.0M PDFs listed as African languages in FinePDF
+#   - We're crawling politely as CommonCrawl suggests here: https://commoncrawl.org/blog/oct-nov-2023-performance-issues
 import asyncio
 import hashlib
 import os
-from collections import namedtuple
+import uuid
 from functools import lru_cache
+from io import BytesIO
 from typing import Annotated
 
+import aiohttp
+import pyarrow.parquet as pq
 from africanlanguages import AfricanLanguages
 from datasets import get_dataset_config_names, load_dataset, Dataset
-from datatrove.pipeline.readers import WarcReader
 from huggingface_hub import snapshot_download
+from surt import surt
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from typer import Option, Typer
+from warcio.archiveiterator import ArchiveIterator
 
-UrlInfo = namedtuple("UrlInfo", ["language", "url"])
-urlstore: dict[str, UrlInfo] = {}
-
-download_semaphore = asyncio.Semaphore(10)
-
-PDF_DOWNLOAD_FOLDER = None
+# NOTE: This limits the number of downloads that happens at once
+download_semaphore = asyncio.Semaphore(5)
 
 app = Typer(no_args_is_help=True)
 
 
-class WarcPDFReader(WarcReader):
-    """Need to subclass to read objects of mimetype application/pdf"""
-
-    def read_file(self, filepath: str):
-        from warcio.archiveiterator import ArchiveIterator
-
-        with self.data_folder.open(filepath, "rb", compression=self.compression) as f:
-            for ri, record in enumerate(ArchiveIterator(f)):
-                with self.track_time():
-                    extracted_data = self.process_record(record)
-                    if extracted_data:
-                        yield from []
-                        return
-
-    @staticmethod
-    def process_record(record: "ArcWarcRecord") -> dict | None:
-        import magic
-
-        # record type
-        if (
-            record.rec_type != "response" and record.rec_type != "conversion"
-        ):  # wet files have "conversion" type
-            return
-
-        # content type filtering
-        mime_type = record.rec_headers.get("WARC-Identified-Payload-Type", None)
-        if mime_type is not None and mime_type != "application/pdf":
-            return
-
-        url = record.rec_headers.get("WARC-Target-URI", None)
-
-        # handle older formats
-        if not url:
-            url = dict(record.rec_headers.headers)["uri"]
-
-        if url not in urlstore:
-            return
-
-        content_bytes = record.content_stream().read()
-        if mime_type is None:
-            # fallback for older crawls without payload types
-            mime_type = magic.from_buffer(content_bytes, mime=True)
-            if mime_type != "application/pdf":
-                return
-
-        filename = url.split("/")[-1]
-        if filename.split(".")[-1].lower() != "pdf":
-            filename = hashlib.sha1(url.encode("utf-8")).hexdigest() + ".pdf"
-
-        output_filename = os.path.join(
-            PDF_DOWNLOAD_FOLDER, urlstore[url].language, filename
-        )
-
-        os.makedirs(os.path.dirname(output_filename), exist_ok=True)
-        if not os.path.exists(output_filename):
-            with open(output_filename, "wb") as f:
-                f.write(content_bytes)
-
-        return True
+def deterministic_id(string: str) -> str:
+    return str(uuid.UUID(hashlib.md5(string).hexdigest()))
 
 
-async def download_pdf(row: dict):
-    if "cc-index" in row["file_path"]:
-        # For now, we are unable to download from cc-index. Need to figure it out
+def query_commoncrawl_parquet(crawl_filepath: str, surt_key: str) -> dict | None:
+    pf = pq.ParquetFile(crawl_filepath)
+
+    for i in range(pf.num_row_groups):
+        rg = pf.metadata.row_group(i)
+        col_idx = pf.schema_arrow.get_field_index("url_surtkey")
+        stats = rg.column(col_idx).statistics
+
+        if stats and stats.min <= surt_key <= stats.max:
+            df = pf.read_row_groups(
+                [i],
+                columns=[
+                    "url_surtkey",
+                    "url",
+                    "warc_filename",
+                    "warc_record_offset",
+                    "warc_record_length",
+                ],
+            ).to_pandas()
+
+            match = df[df["url_surtkey"] == surt_key]
+            if len(match) > 0:
+                # TODO: @theyorubayesian: Why would there be multiple matches?
+                return match.iloc[0].to_dict()
+            break
+
+    return None
+
+
+@retry(
+    stop=stop_after_attempt(1000),
+    wait=wait_fixed(1),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+)
+async def get_record_length_from_warc_headers(
+    session: aiohttp.ClientSession, warc_filename: str, offset: str
+) -> int:
+    chunk_size = 1024 * 1024
+    url = f"https://data.commoncrawl.org/{warc_filename}"
+    headers = {"Range": f"bytes={offset}-{offset + chunk_size - 1}"}
+
+    async with session.get(url, headers=headers) as resp:
+        resp.raise_for_status()
+        content = await resp.read()
+
+    buffer = BytesIO(content)
+    record = next(ArchiveIterator(buffer))
+    return int(record.rec_headers.get_header("Content-Length"))
+
+
+@retry(
+    stop=stop_after_attempt(1000),
+    wait=wait_fixed(1),
+    retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError)),
+)
+async def download_warc_record(
+    download_path: str,
+    warc_filename: str,
+    offset: int,
+    length: int = None,
+) -> None:
+    """
+    Download a single WARC record from Common Crawl asynchronously.
+    Returns the content of the record as bytes.
+    """
+    url = f"https://data.commoncrawl.org/{warc_filename}"
+
+    async with aiohttp.ClientSession() as session:
+        if length is None:
+            length = await get_record_length_from_warc_headers(
+                session, warc_filename, offset
+            )
+
+        headers = {"Range": f"bytes={offset}-{offset + length - 1}"}
+
+        async with session.get(url, headers=headers) as resp:
+            resp.raise_for_status()
+            content = await resp.read()
+
+    # Extract the record from the WARC content
+    record = next(ArchiveIterator(BytesIO(content)))
+    with open(download_path, "wb") as f:
+        f.write(record.content_stream().read())
+
+
+async def download_pdf(row: dict, download_dir: str) -> dict:
+    """
+    Full async function: get WARC content for a given URL.
+    """
+    os.makedirs(f"{download_dir}/{row['language']}", exist_ok=True)
+    filename = f"{deterministic_id(row['id'].encode('utf-8'))}.pdf"
+    download_path = f"{download_dir}/{row['language']}/{filename}"
+
+    row["file_name"] = filename
+
+    if os.path.exists(download_path):
         return row
-    
-    filename = row["url"].split("/")[-1]
-    if filename.split(".")[-1].lower() != "pdf":
-        filename = hashlib.sha1(row["url"].encode("utf-8")).hexdigest() + ".pdf"
 
-    output_filename = os.path.join(
-        PDF_DOWNLOAD_FOLDER, row["language"], filename
-    )
-    if os.path.exists(output_filename):
-        return row
-
-    urlstore[row["url"]] = UrlInfo(language=row["language"], url=row["url"])
-
-    data_folder, paths_file = row["file_path"].split("/segments/")
-    reader = WarcPDFReader(
-        f"{data_folder}/segments",
-        glob_pattern=f"*/warc/{paths_file.split('/warc/')[-1]}",
-        shuffle_files=False,
-        limit=-1,
-    )
+    warc_filename = row["file_path"].replace("s3://commoncrawl/", "")
+    offset = int(row["offset"])
+    length = None
 
     async with download_semaphore:
-        for _ in reader.run():
-            pass
-    
+        if warc_filename.startswith("cc-index"):
+            cdx_results = query_commoncrawl_parquet(row["file_path"], surt(row["url"]))
+
+            if cdx_results:
+                warc_filename = cdx_results["warc_filename"]
+                length = int(cdx_results["warc_record_offset"])
+            else:
+                row["file_name"] = None
+
+        if warc_filename.startswith("crawl-data"):
+            await download_warc_record(
+                warc_filename=warc_filename,
+                offset=offset,
+                length=length,
+                download_path=download_path,
+            )
     return row
 
 
@@ -171,10 +208,11 @@ def download_fineweb_african_pdfs(
         Option("-e", "--exclude-language", help="language codes to exclude"),
     ] = None,
 ):
-    global PDF_DOWNLOAD_FOLDER
     PDF_DOWNLOAD_FOLDER = os.path.join(download_dir, "pdfs")
 
-    download_hf_fineweb_african_data(download_dir=download_dir, exclude_languages=exclude_languages)
+    download_hf_fineweb_african_data(
+        download_dir=download_dir, exclude_languages=exclude_languages
+    )
 
     ds: dict[str, Dataset] = load_dataset(
         "parquet",
@@ -186,10 +224,11 @@ def download_fineweb_african_pdfs(
     )
 
     for _, language_ds in ds.items():
-        language_ds.map(download_pdf, batched=False)
+        language_ds.map(
+            download_pdf, batched=False, fn_kwargs={"download_dir": PDF_DOWNLOAD_FOLDER}
+        )
 
-
-# app.command(download_all_fineweb_african_data)
+    # TODO: Do we rewrite the dataset to file?
 
 
 if __name__ == "__main__":
