@@ -160,7 +160,10 @@ async def download_pdf(row: dict, download_dir: str) -> dict:
 
             if cdx_results:
                 warc_filename = cdx_results["warc_filename"]
-                length = int(cdx_results["warc_record_offset"])
+                # Because we select the first warc_file that has a url match, there's a chance the offset is different
+                # HF may have collected from a different warc_file
+                offset = cdx_results["warc_record_offset"]
+                length = int(cdx_results["warc_record_length"])
             else:
                 row["file_name"] = None
 
