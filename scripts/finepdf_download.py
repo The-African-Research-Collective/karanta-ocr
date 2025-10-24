@@ -19,13 +19,16 @@
 #   - We ignore dag_Latn and pcm_Latn because the eye test shows most of the PDFs are not the correct language
 #   - Together, they consititure 1.9M out of the 2.0M PDFs listed as African languages in FinePDF
 #   - We're crawling politely as CommonCrawl suggests here: https://commoncrawl.org/blog/oct-nov-2023-performance-issues
+from __future__ import annotations
+
 import asyncio
 import hashlib
+import inspect
 import os
 import uuid
-from functools import lru_cache
+from functools import lru_cache, partial, wraps
 from io import BytesIO
-from typing import Annotated
+from typing import Annotated, Any, Callable
 
 import aiohttp
 import pyarrow.parquet as pq
@@ -41,7 +44,31 @@ from warcio.archiveiterator import ArchiveIterator
 # NOTE: This limits the number of downloads that happens at once
 download_semaphore = asyncio.Semaphore(10)
 
-app = Typer(no_args_is_help=True)
+
+class AsyncTyper(Typer):
+    @staticmethod
+    def maybe_run_async(decorator: Callable, func: Callable) -> Any:
+        if inspect.iscoroutinefunction(func):
+
+            @wraps(func)
+            def runner(*args: Any, **kwargs: Any) -> Any:
+                return asyncio.run(func(*args, **kwargs))
+
+            decorator(runner)
+        else:
+            decorator(func)
+        return func
+
+    def callback(self, *args: Any, **kwargs: Any) -> Any:
+        decorator = super().callback(*args, **kwargs)
+        return partial(self.maybe_run_async, decorator)
+
+    def command(self, *args: Any, **kwargs: Any) -> Any:
+        decorator = super().command(*args, **kwargs)
+        return partial(self.maybe_run_async, decorator)
+
+
+app = AsyncTyper(no_args_is_help=True)
 
 
 def deterministic_id(string: str) -> str:
@@ -109,6 +136,7 @@ async def get_record_length_from_warc_headers(
     retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, OSError)),
 )
 async def download_warc_record(
+    session: aiohttp.ClientSession,
     download_path: str,
     warc_filename: str,
     offset: int,
@@ -120,17 +148,16 @@ async def download_warc_record(
     """
     url = f"https://data.commoncrawl.org/{warc_filename}"
 
-    async with aiohttp.ClientSession() as session:
-        if length is None:
-            length = await get_record_length_from_warc_headers(
-                session, warc_filename, offset
-            )
+    if length is None:
+        length = await get_record_length_from_warc_headers(
+            session, warc_filename, offset
+        )
 
-        headers = {"Range": f"bytes={offset}-{offset + length - 1}"}
+    headers = {"Range": f"bytes={offset}-{offset + length - 1}"}
 
-        async with session.get(url, headers=headers) as resp:
-            resp.raise_for_status()
-            content = await resp.read()
+    async with session.get(url, headers=headers) as resp:
+        resp.raise_for_status()
+        content = await resp.read()
 
     # Extract the record from the WARC content
     record = next(ArchiveIterator(BytesIO(content)))
@@ -138,7 +165,9 @@ async def download_warc_record(
         f.write(record.content_stream().read())
 
 
-async def download_pdf(row: dict, download_dir: str) -> dict:
+async def download_pdf(
+    row: dict, download_dir: str, session: aiohttp.ClientSession
+) -> dict:
     """
     Full async function: get WARC content for a given URL.
     """
@@ -174,13 +203,18 @@ async def download_pdf(row: dict, download_dir: str) -> dict:
                 offset=offset,
                 length=length,
                 download_path=download_path,
+                session=session,
             )
     return row
 
 
 @app.command()
 @lru_cache()
-def list_african_languages_in_finepdf(verbose: Annotated[bool, Option(help="If verbose, print african languages")] = False) -> list[str]:
+def list_african_languages_in_finepdf(
+    verbose: Annotated[
+        bool, Option(help="If verbose, print african languages")
+    ] = False,
+) -> list[str]:
     configs = get_dataset_config_names("HuggingFaceFW/finepdfs")
     finepdf_african_languages = [
         language
@@ -223,7 +257,7 @@ def download_hf_fineweb_african_data(
 
 
 @app.command()
-def download_fineweb_african_pdfs(
+async def download_fineweb_african_pdfs(
     download_dir: Annotated[str, Option(help="Directory to download data to")],
     include_languages: Annotated[
         str, Option("-i", "--include-language", help="Languages to include")
@@ -236,7 +270,9 @@ def download_fineweb_african_pdfs(
     PDF_DOWNLOAD_FOLDER = os.path.join(download_dir, "pdfs")
 
     download_hf_fineweb_african_data(
-        download_dir=download_dir, include_languages=include_languages, exclude_languages=exclude_languages
+        download_dir=download_dir,
+        include_languages=include_languages,
+        exclude_languages=exclude_languages,
     )
 
     ds: dict[str, Dataset] = load_dataset(
@@ -253,10 +289,21 @@ def download_fineweb_african_pdfs(
         },
     )
 
-    for _, language_ds in ds.items():
-        language_ds.map(
-            download_pdf, batched=False, fn_kwargs={"download_dir": PDF_DOWNLOAD_FOLDER}
-        )
+    async with aiohttp.ClientSession() as session:
+        for _, language_ds in ds.items():
+            await asyncio.gather(
+                *[
+                    download_pdf(row, PDF_DOWNLOAD_FOLDER, session=session)
+                    for row in language_ds
+                    if not os.path.exists(
+                        os.path.join(
+                            PDF_DOWNLOAD_FOLDER,
+                            row["language"],
+                            f"{deterministic_id(row['id'].encode('utf-8'))}.pdf",
+                        )
+                    )
+                ]
+            )
 
     # TODO: Do we rewrite the dataset to file?
 
