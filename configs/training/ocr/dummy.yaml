@@ -67,5 +67,4 @@ checkpointing_steps: epoch
 use_deepspeed: true
 num_train_epochs: 1
 optimizer: adamw_torch
-use_deepspeed: true
 lr_scheduler_type: cosine

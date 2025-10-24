@@ -9,11 +9,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from PIL import Image
+from collections import OrderedDict
 
 from typing import Optional, List, Any, Union, Tuple, NewType
 
 from accelerate import Accelerator
-from transformers import HfArgumentParser, TrainingArguments, GenerationConfig
+from transformers import HfArgumentParser, TrainingArguments
 
 from karanta.training.classification_args import ExperimentArguments
 
@@ -305,6 +306,7 @@ def get_last_checkpoint_path(args, incomplete: bool = False) -> str:
 
     return last_checkpoint_path
 
+
 def save_with_accelerate(
     accelerator: Accelerator,
     model: torch.nn.Module,
@@ -312,11 +314,11 @@ def save_with_accelerate(
     use_lora: bool = False,
     model_attribute_to_save: Optional[str] = None,
 ) -> None:
-    """`model_attribute_to_save` is for used to save PPO's policy instead of the full model"""
+    """`model_attribute_to_save` is used to save PPO's policy instead of the full model"""
     # set the generation config to an empty setting to be safe.
     # we usually do greedy decoding for generation, so this should be okay.
     # otherwise, we get an error thrown at save time.
-    unwrapped_model: PreTrainedModel = accelerator.unwrap_model(model)
+    unwrapped_model = accelerator.unwrap_model(model)
     if model_attribute_to_save is not None:
         unwrapped_model = getattr(unwrapped_model, model_attribute_to_save)
     # When doing multi-gpu training, we need to use accelerator.get_state_dict(model) to get the state_dict.
@@ -351,6 +353,7 @@ def save_with_accelerate(
             safe_serialization=False,
         )
 
+
 def is_checkpoint_folder(dir: str, folder: str) -> bool:
     return (
         folder.startswith("step_") or folder.startswith("epoch_")
@@ -367,8 +370,3 @@ def clean_last_n_checkpoints(output_dir: str, keep_last_n_checkpoints: int) -> N
             logger.info(f"Removing checkpoint {checkpoint}")
             shutil.rmtree(os.path.join(output_dir, checkpoint))
     logger.info("Remaining files:" + str(os.listdir(output_dir)))
-
-
-
-if __name__ == '__main__':
-    print(get_last_checkpoint("/home/oogundep/karanta-ocr/runs/karanta_full_set_qwen_2_5_3B_vl", True))

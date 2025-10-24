@@ -347,15 +347,6 @@ class Tokenizer(BasePipelineStep):
         # The model will be penalized only for mistakes in generating the XML/JSON/YAML output
         labels_full[len(inputs.input_ids[0]) :] = labels.input_ids[0]
 
-        # === LABEL PADDING ===
-        # Pad labels to the maximum length expected by the model
-
-        # input_ids = self._pad_sequence(
-        #     input_ids, pad_value=self.processor.tokenizer.pad_token_id
-        # )
-        # attention_mask = self._pad_sequence(attention_mask, pad_value=0)
-        # labels_full = self._pad_sequence(labels_full, pad_value=self.masking_index)
-
         # === OUTPUT ASSEMBLY ====
         # Package all processed data into the format expected by the OCR model trainer
         sample.model_inputs["input_ids"] = (
