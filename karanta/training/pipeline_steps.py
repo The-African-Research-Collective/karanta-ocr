@@ -376,7 +376,7 @@ class Tokenizer(BasePipelineStep):
         # image_grid_thw typically contains height, width, and other document image dimensions
         # This helps with layout understanding and text region detection
 
-        # if hasattr(inputs, "image_grid_thw"):
-        #     sample.model_inputs["image_grid_thw"] = inputs.image_grid_thw[0]
+        if hasattr(inputs, "image_grid_thw"):
+            sample.model_inputs["image_grid_thw"] = inputs.image_grid_thw[0]
 
         return sample

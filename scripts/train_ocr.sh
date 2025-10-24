@@ -31,7 +31,7 @@ export NCCL_P2P_DISABLE=1
 export NCCL_DEBUG=INFO
 export PYTHONUNBUFFERED=1
 export WANDB_WATCH=all
-
+export NCCL_TIMEOUT=5400 # prevent NCCL timeouts among processes
 # ---- PATHS ----
 SCRIPT_PATH="karanta/training/ocr_training.py"
 

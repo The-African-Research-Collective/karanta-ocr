@@ -62,7 +62,7 @@ class ExperimentArguments:
         default="wandb", metadata={"help": "The service to report to"}
     )
     timeout: Optional[int] = field(
-        default=600, metadata={"help": "The timeout for the run"}
+        default=7200, metadata={"help": "The timeout for the run"}
     )
     checkpointing_steps: Optional[str] = field(
         default=None,

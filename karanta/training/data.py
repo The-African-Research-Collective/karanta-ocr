@@ -8,7 +8,6 @@ from datasets import Dataset, load_from_disk
 from concurrent.futures import ThreadPoolExecutor
 from transformers import AutoProcessor
 from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader
 
 from karanta.training.utils import load_yaml_config, SingleDatapoint
 from karanta.training.pipeline_steps import (
@@ -96,11 +95,6 @@ class LocalDataset:
 
         # === cache dir ===
         cache_folder_name = cache_folder_name or "processed_hf_seq"
-        cache_folder_name = (
-            cache_folder_name
-            if num_samples == -1
-            else f"{cache_folder_name}_n{num_samples}"
-        )
         self.cache_dir = Path(self.root_dir) / ".cache" / cache_folder_name
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,10 +104,23 @@ class LocalDataset:
         ).hexdigest()
         self.cache_path = self.cache_dir / f"dataset_{pipeline_hash}"
 
-        if self.cache_path.exists() and not force_rebuild:
-            print(f"📦 Loading cached dataset from {self.cache_path}")
-            self.dataset = load_from_disk(str(self.cache_path))
-            return
+        print(f"🔍 Dataset cache path: {self.cache_path}")
+        self.temp_cache_paths = list(self.cache_dir.glob("dataset_*"))
+        if self.temp_cache_paths and not force_rebuild:
+            print(
+                f"⚠️ Warning: Found existing cache folders in {self.cache_dir}, they may be outdated: {self.temp_cache_paths}"
+            )
+            for i in range(len(self.temp_cache_paths)):
+                try:
+                    print(
+                        f"📦 Loading cached dataset from {self.temp_cache_paths[i]}..."
+                    )
+                    self.dataset = load_from_disk(str(self.temp_cache_paths[i]))
+                    self.dataset.select(range(num_samples))
+                    return
+                except Exception:
+                    print("❌ Failed to load existing cache")
+                    continue
 
         print("🧩 Building dataset with sequential pipeline execution...")
         raw_samples = initialize_dataset(self.json_dir, self.pdf_dir)
@@ -130,6 +137,7 @@ class LocalDataset:
             attention_masks_list = []
             labels_list = []
             pixel_values_list = []
+            image_grid_thw_list = []
 
             examples_zipped = zip(examples["pdf_path"], examples["json_path"])
 
@@ -147,21 +155,24 @@ class LocalDataset:
                 attention_masks_list.append(sample.model_inputs["attention_mask"])
                 labels_list.append(sample.model_inputs["labels"])
                 pixel_values_list.append(sample.model_inputs["pixel_values"])
+                image_grid_thw_list.append(sample.model_inputs["image_grid_thw"])
 
             examples["input_ids"] = input_ids_list
             examples["attention_mask"] = attention_masks_list
             examples["labels"] = labels_list
             examples["pixel_values"] = pixel_values_list
+            examples["image_grid_thw"] = image_grid_thw_list
 
             return examples
 
         self.dataset = self.raw_dataset.map(
             full_pipeline,
             desc="Applying full Karanta pipeline",
-            num_proc=1,  # can parallelize if pipeline steps are stateless per sample
+            num_proc=4,  # can parallelize if pipeline steps are stateless per sample
             remove_columns=self.raw_dataset.column_names,
             batched=True,
-            batch_size=4,
+            batch_size=8,
+            cache_file_name=str(self.cache_dir / "hf_cache_temp.arrow"),
         )
 
         # === Persist Arrow dataset ===
@@ -202,6 +213,7 @@ class DataCollator:
     def __call__(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
         input_ids_list, attention_masks_list, labels_list = [], [], []
         pixel_values_list = []
+        image_grid_thw = []
 
         def to_tensor(x):
             if isinstance(x, np.ndarray):
@@ -230,6 +242,9 @@ class DataCollator:
             # pixel_values may be [num_patches, hidden_dim] → variable num_patches
             pixel_values = to_tensor(sample["pixel_values"])
             pixel_values_list.append(pixel_values)
+
+            image_grid_thw_values = to_tensor(sample["image_grid_thw"])
+            image_grid_thw.append(image_grid_thw_values)
 
         if not input_ids_list:
             return {}
@@ -262,6 +277,7 @@ class DataCollator:
             "attention_mask": batch_encodings["attention_mask"],
             "labels": labels_padded,
             "pixel_values": pixel_values_padded,
+            "image_grid_thw": torch.stack(image_grid_thw),
         }
 
         return batch_dict
@@ -269,13 +285,13 @@ class DataCollator:
 
 if __name__ == "__main__":
     all_config = load_yaml_config(
-        "configs/training/ocr/karanta_set_qwen_2_5_3B_vl_1000_linear_no_base_text.yaml"
+        "configs/training/ocr/karanta_set_qwen_2_5_3B_vl_all_linear_no_base_text.yaml"
     )
     # print(all_config)
-    config = all_config["dataset_train"][1]
+    config = all_config["dataset_train"][2]
     pipeline = config["pipeline"]
 
-    print(config)
+    print(pipeline)
     dataset = LocalDataset(
         root_dir=Path(config["root_dir"]),
         pdf_dir_name=config["pdf_dir_name"],
@@ -316,19 +332,19 @@ if __name__ == "__main__":
 
     # print(f"Dataset length: {len(dataset)}")
 
-    dataloader = DataLoader(
-        ts,
-        batch_size=2,
-        collate_fn=DataCollator(
-            "Qwen/Qwen2.5-VL-3B-Instruct", max_token_len=all_config["max_length"]
-        ),
-        num_workers=4,
-    )
-    from tqdm import tqdm
+    # dataloader = DataLoader(
+    #     ts,
+    #     batch_size=0,
+    #     collate_fn=DataCollator(
+    #         "Qwen/Qwen2.5-VL-3B-Instruct", max_token_len=all_config["max_length"]
+    #     ),
+    #     num_workers=4,
+    # )
+    # from tqdm import tqdm
 
-    for b in tqdm(dataloader):
-        print(b.keys())
-        break
+    # for b in tqdm(dataloader):
+    #     print(b.keys())
+    #     break
 
     # print(next(iter(dataloader))['input_ids'].shape)
 

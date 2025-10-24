@@ -1,6 +1,5 @@
 import os
 import time
-import random
 import logging
 import torch
 import math
@@ -228,8 +227,6 @@ def main(args: ArgumentParserPlus):
         if exp_args.output_dir is not None:
             os.makedirs(exp_args.output_dir, exist_ok=True)
 
-    accelerator.wait_for_everyone()
-
     # Initialize the training dataset
     with accelerator.main_process_first():
         train_dataset = []
@@ -238,6 +235,7 @@ def main(args: ArgumentParserPlus):
                 f"Creating training dataset {i + 1} from: {data_mix.get('root_dir', None)}"
             )
             pipeline_mix = data_mix.get("pipeline", None)
+
             ld = LocalDataset(
                 root_dir=Path(data_mix["root_dir"]),
                 pdf_dir_name=data_mix["pdf_dir_name"],
@@ -262,17 +260,18 @@ def main(args: ArgumentParserPlus):
         data_collator = DataCollator(
             model_args.model_name_or_path, max_token_len=data_args.max_length
         )
+        train_dataset = train_dataset.shuffle(seed=exp_args.seed)
 
         if not data_args.dataset_eval:
-            train_dataset, eval_dataset = random_split(train_dataset, [0.95, 0.05])
-            eval_dataloaders = {}
+            train_dataset, eval_dataset = random_split(train_dataset, [0.99, 0.01])
             eval_dl = DataLoader(
                 eval_dataset,
                 collate_fn=data_collator,
                 batch_size=exp_args.per_device_eval_batch_size,
                 shuffle=True,
+                drop_last=True,
             )
-            eval_dataloaders["eval_split"] = eval_dl
+            eval_dataloaders = eval_dl
 
         else:
             # Initialize the evaluation dataset
@@ -298,17 +297,15 @@ def main(args: ArgumentParserPlus):
                 )
                 eval_dataloaders[data_mix.get("name", str(i))] = eval_dl
 
-    # Log a few random samples from the training set:
-    for index in random.sample(range(len(train_dataset)), 3):
-        logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
-
     train_dataloader = DataLoader(
         train_dataset,
         shuffle=True,
         collate_fn=data_collator,
         batch_size=exp_args.per_device_train_batch_size,
         num_workers=data_args.dataloader_num_workers,
+        drop_last=True,
     )
+    accelerator.wait_for_everyone()
 
     # Initialize Model Config if not provided
     if model_args.config_name:
@@ -630,6 +627,8 @@ def main(args: ArgumentParserPlus):
         accelerator.log(eval_metrics, step=completed_steps)
         logger.info(f"Evaluation results at step {completed_steps} is  {eval_metrics}")
 
+    accelerator.wait_for_everyone()
+
     logger.info(f"Starting from epoch {starting_epoch} and step {completed_steps}.")
     logger.info(
         f"Total training steps: {max_train_steps}, Total samples to process: {max_train_samples}"
@@ -655,6 +654,12 @@ def main(args: ArgumentParserPlus):
         with cm as prof:
             for step, batch in enumerate(active_dataloader):
                 if batch is None:
+                    # in case of an empty batch, we create a dummy loss and call backward
+                    # so all ranks still perform a backward step (and hit the same collectives).
+                    dummy_loss = torch.tensor(
+                        0.0, device=accelerator.device, requires_grad=True
+                    )
+                    accelerator.backward(dummy_loss)
                     continue
 
                 batch = {k: v.to(accelerator.device) for k, v in batch.items()}
@@ -696,7 +701,8 @@ def main(args: ArgumentParserPlus):
                             logger.info(
                                 f"Evaluation results at step {completed_steps} is  {eval_metrics}"
                             )
-                            model.train()
+                        accelerator.wait_for_everyone()
+                        model.train()
 
                     if (
                         exp_args.is_profile

@@ -70,14 +70,14 @@ dataset_train:
         max_length: 6144
 dataloader_num_workers: 1
 max_length: 6144
-data_cache_folder_name: processed_no_anchor
+data_cache_folder_name: processed_no_anchor_all_samples
 
 # Experiment Configuration
-exp_name: karanta_set_qwen_2_5_3B_vl_1000_linear_no_base_text
+exp_name: karanta_set_qwen_2_5_3B_vl_all_samples_linear_no_base_text
 seed: 42
 report_to:
   - wandb
-gradient_accumulation_steps: 4
+gradient_accumulation_steps: 16
 use_flash_attention: True
 output_dir: /home/oogundep/karanta-ocr/runs
 per_device_train_batch_size: 1
@@ -88,12 +88,13 @@ report_to: wandb
 wandb_project_name: karanta
 wandb_entity: african-research-collective
 logging_steps: 100
-eval_steps: 500
-checkpointing_steps: 500
+eval_steps: 1000
+checkpointing_steps: 1000
 use_deepspeed: true
 num_train_epochs: 3
 optimizer: adamw_torch
 use_deepspeed: true
 lr_scheduler_type: linear
-num_samples: 1000
+num_samples: -1
 is_profile: false
+learning_rate: 1e-4
