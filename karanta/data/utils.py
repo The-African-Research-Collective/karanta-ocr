@@ -271,7 +271,7 @@ def load_prompt_template(prompt_key: str, prompt_path: str) -> Template:
 
 
 def create_vision_message(
-    prompt_template: Template, anchor_text: str, image_base64: str
+    prompt_template: Template, anchor_text: Optional[str], image_base64: str
 ) -> list:
     """
     Create standardized message format for vision models.
@@ -279,7 +279,10 @@ def create_vision_message(
     Returns:
         list: Message format compatible with OpenAI API
     """
-    rendered_prompt = prompt_template.render({"base_text": anchor_text})
+    if anchor_text:
+        rendered_prompt = prompt_template.render({"base_text": anchor_text})
+    else:
+        rendered_prompt = prompt_template.render()
 
     return [
         {
