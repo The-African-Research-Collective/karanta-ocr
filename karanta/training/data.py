@@ -1,16 +1,16 @@
-import json
 import torch
 import numpy as np
-
+import json
+import hashlib
 from pathlib import Path
-from transformers import AutoProcessor
-from typing import List, Optional, Tuple, Dict
-from torch.utils.data import Dataset, DataLoader
+from typing import List, Dict, Optional
+from datasets import Dataset, load_from_disk
 from concurrent.futures import ThreadPoolExecutor
+from transformers import AutoProcessor
+from torch.nn.utils.rnn import pad_sequence
 
 from karanta.training.utils import load_yaml_config, SingleDatapoint
 from karanta.training.pipeline_steps import (
-    BasePipelineStep,
     PDF2ImageStep,
     JSONOutputFormat,
     FetchPageData,
@@ -18,6 +18,7 @@ from karanta.training.pipeline_steps import (
     FinetuningPrompt,
     InstructUserMessages,
     Tokenizer,
+    FetchMultipageData,
 )
 
 str2PipelineStep = {
@@ -28,54 +29,54 @@ str2PipelineStep = {
     "FinetuningPrompt": FinetuningPrompt,
     "InstructUserMessages": InstructUserMessages,
     "Tokenizer": Tokenizer,
+    "FetchMultipageData": FetchMultipageData,
 }
+
+
+def check_tokens_and_labels(input_ids, labels):
+    # Count total tokens in input_ids
+    total_tokens = input_ids.numel()
+
+    # Find all non -100 items in labels
+    non_padding_mask = labels != -100
+    non_padding_items = labels[non_padding_mask]
+    valid_label_count = non_padding_items.numel()
+
+    # Print results
+    print(f"Total tokens in input_ids: {total_tokens}")
+    print(f"Valid labels (non -100): {valid_label_count}")
+    print(
+        f"Percentage of valid labels: {(valid_label_count / total_tokens * 100):.2f}%"
+    )
+
+    return total_tokens, valid_label_count, non_padding_items
 
 
 def initialize_dataset(
     json_dir: Path, pdf_dir: Path, max_workers: Optional[int] = None
-) -> List[SingleDatapoint]:
+):
     json_files = list(json_dir.glob("*.json"))
 
-    def check_pdf_wrapper(json_file: Path) -> Optional[Tuple[str, Tuple[Path, Path]]]:
-        """
-        Check if the corresponding PDF file exists for the given JSON file.
-        """
+    def check_pair(json_file):
         pdf_file = pdf_dir / f"{json_file.stem}.pdf"
         if pdf_file.exists():
-            # Check that json text loads successfully
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
-                    _ = json.loads(json.loads(f.read())["result"]["text"])
-            except (json.JSONDecodeError, KeyError):
-                print(f"Error reading JSON file: {json_file}")
+                    _ = json.loads(f.read())["generation"]["pages"]
+                return {"pdf_path": str(pdf_file), "json_path": str(json_file)}
+            except Exception:
                 return None
-
-            return json_file.stem, (pdf_file, json_file)
         return None
 
-    pdf_files = {}
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = executor.map(check_pdf_wrapper, json_files)
-
-        for result in results:
-            if result is not None:
-                name, (pdf_path, json_path) = result
-                pdf_files[name] = (pdf_path, json_path)
-
-    return [
-        SingleDatapoint(pdf_path=pdf_path, json_path=json_path)
-        for pdf_path, json_path in pdf_files.values()
-    ]
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        results = list(filter(None, ex.map(check_pair, json_files)))
+    return results
 
 
-class LocalDataset(Dataset):
+class LocalDataset:
     """
-    This is the dataset class for generating the dataset from a local directory for training and evaluation.
-    This class locates the JSON files in a given directory and locates the corresponding PDF for that JSON file.
-    Each pairs of JSON and PDF is treated as a single sample in the dataset and they go through a set of processing steps.
-
-    These processing steps are defined in the config file and are executed in the order they are defined.
+    Reimplementation of LocalDataset with Hugging Face caching, preserving sequential pipeline dependencies.
+    Each sample runs the full pipeline (step-by-step), and the final model_inputs are cached as Arrow.
     """
 
     def __init__(
@@ -83,170 +84,281 @@ class LocalDataset(Dataset):
         root_dir: Path,
         pdf_dir_name: str = "pdf_inputs",
         json_dir_name: str = "json_outputs",
+        cache_folder_name: Optional[str] = None,
         pipeline_steps: Optional[List[Dict]] = None,
+        num_samples: int = -1,
+        force_rebuild: bool = False,
     ):
-        super().__init__()
+        self.root_dir = Path(root_dir)
+        self.pdf_dir = self.root_dir / pdf_dir_name
+        self.json_dir = self.root_dir / json_dir_name
 
-        self.root_dir = root_dir
-        self.pdf_dir = root_dir / pdf_dir_name
-        self.json_dir = root_dir / json_dir_name
+        # === cache dir ===
+        cache_folder_name = cache_folder_name or "processed_hf_seq"
+        self.cache_dir = Path(self.root_dir) / ".cache" / cache_folder_name
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self.dataset: List[SingleDatapoint] = initialize_dataset(
-            self.json_dir, self.pdf_dir
-        )
+        # === pipeline fingerprint ===
+        pipeline_hash = hashlib.md5(
+            json.dumps(pipeline_steps or [], sort_keys=True).encode()
+        ).hexdigest()
+        self.cache_path = self.cache_dir / f"dataset_{pipeline_hash}"
+
+        print(f"🔍 Dataset cache path: {self.cache_path}")
+        self.temp_cache_paths = list(self.cache_dir.glob("dataset_*"))
+        if self.temp_cache_paths and not force_rebuild:
+            print(
+                f"⚠️ Warning: Found existing cache folders in {self.cache_dir}, they may be outdated: {self.temp_cache_paths}"
+            )
+            for i in range(len(self.temp_cache_paths)):
+                try:
+                    print(
+                        f"📦 Loading cached dataset from {self.temp_cache_paths[i]}..."
+                    )
+                    self.dataset = load_from_disk(str(self.temp_cache_paths[i]))
+                    self.dataset.select(range(num_samples))
+                    return
+                except Exception:
+                    print("❌ Failed to load existing cache")
+                    continue
+
+        print("🧩 Building dataset with sequential pipeline execution...")
+        raw_samples = initialize_dataset(self.json_dir, self.pdf_dir)
+        if num_samples > 0:
+            raw_samples = raw_samples[:num_samples]
+        self.raw_dataset = Dataset.from_list(raw_samples)
+
+        # === Initialize pipeline ===
         self.pipeline = self._initialize_pipeline_steps(pipeline_steps)
 
-    def _initialize_pipeline_steps(
-        self, pipeline_config: List[Dict]
-    ) -> List[BasePipelineStep]:
-        """
-        Initialize the pipeline steps from the configuration list.
-        """
-        pipeline = []
-        for step_config in pipeline_config:
-            name = step_config.pop("name")
+        # === Apply full pipeline per example ===
+        def full_pipeline(examples):
+            input_ids_list = []
+            attention_masks_list = []
+            labels_list = []
+            pixel_values_list = []
+            image_grid_thw_list = []
 
+            examples_zipped = zip(examples["pdf_path"], examples["json_path"])
+
+            for example in examples_zipped:
+                sample = SingleDatapoint(
+                    pdf_path=Path(example[0]), json_path=Path(example[1])
+                )
+                for step in self.pipeline:
+                    sample = step(sample)
+
+                if sample.model_inputs is None:
+                    continue
+
+                input_ids_list.append(sample.model_inputs["input_ids"])
+                attention_masks_list.append(sample.model_inputs["attention_mask"])
+                labels_list.append(sample.model_inputs["labels"])
+                pixel_values_list.append(sample.model_inputs["pixel_values"])
+                image_grid_thw_list.append(sample.model_inputs["image_grid_thw"])
+
+            examples["input_ids"] = input_ids_list
+            examples["attention_mask"] = attention_masks_list
+            examples["labels"] = labels_list
+            examples["pixel_values"] = pixel_values_list
+            examples["image_grid_thw"] = image_grid_thw_list
+
+            return examples
+
+        self.dataset = self.raw_dataset.map(
+            full_pipeline,
+            desc="Applying full Karanta pipeline",
+            num_proc=4,  # can parallelize if pipeline steps are stateless per sample
+            remove_columns=self.raw_dataset.column_names,
+            batched=True,
+            batch_size=8,
+            cache_file_name=str(self.cache_dir / "hf_cache_temp.arrow"),
+        )
+
+        # === Persist Arrow dataset ===
+        self.dataset.save_to_disk(str(self.cache_path))
+
+    def _initialize_pipeline_steps(self, pipeline_config: List[Dict]):
+        steps = []
+        for cfg in pipeline_config:
+            cfg = cfg.copy()
+            name = cfg.pop("name")
+            step_class = str2PipelineStep[name]
             if name == "Tokenizer":
-                processor = step_config.pop("processor", None)
-                processor = AutoProcessor.from_pretrained(processor)
-                step_class = str2PipelineStep.get(name)
-                step_instance = step_class(**step_config, processor=processor)
+                processor = AutoProcessor.from_pretrained(cfg.pop("processor"))
+                steps.append(step_class(**cfg, processor=processor))
             else:
-                step_class = str2PipelineStep.get(name)
-                step_instance = step_class(**step_config)
-            pipeline.append(step_instance)
+                steps.append(step_class(**cfg))
+        return steps
 
-        return pipeline
+    def __getitem__(self, idx):
+        return self.dataset[idx]
 
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, idx: int) -> SingleDatapoint:
-        """
-        Fetch a single item from the dataset by index
-        """
-        sample = self.dataset[idx]
-
-        for step in self.pipeline:
-            sample = step(sample)
-
-        return sample.model_inputs
-
 
 class DataCollator:
     """
-    The data collator is used to prepare a batch of data for training.
-    This data collator accepts a list of Dicts, each representing a sample,
-    and processes them according to the pipeline steps defined in the dataset.
+    Prepares a batch of multimodal OCR samples for training Qwen2.5-VL-3B-Instruct.
+    Handles tokenizer-based padding for text and dynamic padding for image embeddings.
     """
 
-    def __init__(self, max_token_len: Optional[int] = None):
+    def __init__(self, model_name_or_path: str, max_token_len: Optional[int] = None):
+        self.processor = AutoProcessor.from_pretrained(model_name_or_path)
         self.max_token_len = max_token_len
+        self.pad_token_id = self.processor.tokenizer.pad_token_id
+        self.masking_index = -100  # For label ignore
 
-    def __call__(self, batch: List[Dict]) -> Dict:
-        input_ids = []
-        attention_mask = []
-        labels = []
-        pixel_values = []
+    def __call__(self, batch: List[Dict]) -> Dict[str, torch.Tensor]:
+        input_ids_list, attention_masks_list, labels_list = [], [], []
+        pixel_values_list = []
         image_grid_thw = []
 
+        def to_tensor(x):
+            if isinstance(x, np.ndarray):
+                return torch.from_numpy(x)
+            if isinstance(x, list):
+                return torch.tensor(x)
+            return x
+
         for sample in batch:
-            if sample:
-                sample_input_ids = sample["input_ids"]
-                sample_attention_mask = sample["attention_mask"]
-                sample_labels = sample["labels"]
+            if not sample:
+                continue
 
-                if isinstance(sample_input_ids, np.ndarray):
-                    input_ids_tensor = torch.from_numpy(sample_input_ids)
-                elif isinstance(sample_input_ids, torch.Tensor):
-                    input_ids_tensor = sample_input_ids
-                else:
-                    input_ids_tensor = torch.tensor(sample_input_ids)
+            input_ids = to_tensor(sample["input_ids"]).squeeze(0)
+            attention_mask = to_tensor(sample["attention_mask"]).squeeze(0)
+            labels = to_tensor(sample["labels"]).squeeze(0)
 
-                input_ids.append(input_ids_tensor[: self.max_token_len])
+            if self.max_token_len is not None:
+                input_ids = input_ids[: self.max_token_len]
+                attention_mask = attention_mask[: self.max_token_len]
+                labels = labels[: self.max_token_len]
 
-                if isinstance(sample_attention_mask, np.ndarray):
-                    attention_mask_tensor = torch.from_numpy(sample_attention_mask)
-                elif isinstance(sample_attention_mask, torch.Tensor):
-                    attention_mask_tensor = sample_attention_mask
-                else:
-                    attention_mask_tensor = torch.tensor(sample_attention_mask)
+            input_ids_list.append(input_ids)
+            attention_masks_list.append(attention_mask)
+            labels_list.append(labels)
 
-                attention_mask.append(attention_mask_tensor[: self.max_token_len])
+            # pixel_values may be [num_patches, hidden_dim] → variable num_patches
+            pixel_values = to_tensor(sample["pixel_values"])
+            pixel_values_list.append(pixel_values)
 
-                if isinstance(sample_labels, np.ndarray):
-                    labels_tensor = torch.from_numpy(sample_labels)
-                elif isinstance(sample_labels, torch.Tensor):
-                    labels_tensor = sample_labels
-                else:
-                    labels_tensor = torch.tensor(sample_labels)
+            image_grid_thw_values = to_tensor(sample["image_grid_thw"])
+            image_grid_thw.append(image_grid_thw_values)
 
-                labels.append(labels_tensor[: self.max_token_len])
+        if not input_ids_list:
+            return {}
 
-                # Handle pixel_values which might be numpy array or already a tensor
-                sample_pixel_values = sample["pixel_values"]
-                if isinstance(sample_pixel_values, np.ndarray):
-                    sample_pixel_values = torch.from_numpy(sample_pixel_values)
-                pixel_values.append(sample_pixel_values)
+        # === Pad text using tokenizer ===
+        batch_encodings = self.processor.tokenizer.pad(
+            {
+                "input_ids": input_ids_list,
+                "attention_mask": attention_masks_list,
+            },
+            padding=True,
+            return_tensors="pt",
+        )
 
-                # Handle image_grid_thw
-                sample_image_grid_thw = sample["image_grid_thw"]
-                if isinstance(sample_image_grid_thw, np.ndarray):
-                    sample_image_grid_thw = torch.from_numpy(sample_image_grid_thw)
-                image_grid_thw.append(sample_image_grid_thw)
+        labels_padded = self.processor.tokenizer.pad(
+            {"input_ids": labels_list},
+            padding=True,
+            return_tensors="pt",
+        )["input_ids"]
+        labels_padded[labels_padded == self.pad_token_id] = self.masking_index
 
-        if not input_ids:
-            return
+        # === Pad visual embeddings ===
+        # pixel_values: list of [num_patches, hidden_dim] tensors → pad along num_patches
+        pixel_values_padded = pad_sequence(
+            pixel_values_list, batch_first=True, padding_value=0.0
+        )
 
-        return {
-            "input_ids": torch.stack(input_ids),
-            "attention_mask": torch.stack(attention_mask),
-            "labels": torch.stack(labels),
-            "pixel_values": torch.stack(pixel_values),
+        batch_dict = {
+            "input_ids": batch_encodings["input_ids"],
+            "attention_mask": batch_encodings["attention_mask"],
+            "labels": labels_padded,
+            "pixel_values": pixel_values_padded,
             "image_grid_thw": torch.stack(image_grid_thw),
         }
 
+        return batch_dict
+
 
 if __name__ == "__main__":
-    all_config = load_yaml_config("configs/training/ocr/dummy.yaml")
-    print(all_config)
-    config = all_config["dataset_train"][0]
+    all_config = load_yaml_config(
+        "configs/training/ocr/karanta_set_qwen_2_5_3B_vl_all_linear_no_base_text.yaml"
+    )
+    # print(all_config)
+    config = all_config["dataset_train"][2]
     pipeline = config["pipeline"]
+
+    print(pipeline)
     dataset = LocalDataset(
         root_dir=Path(config["root_dir"]),
         pdf_dir_name=config["pdf_dir_name"],
         json_dir_name=config["json_dir_name"],
+        cache_folder_name=all_config.get("data_cache_folder_name", None),
+        num_samples=-1,
         pipeline_steps=pipeline,
     )
 
-    from transformers import AutoProcessor
+    # ts = concatenate_datasets([dataset.dataset, dataset.dataset])
+    ts = dataset.dataset
 
-    # torch.set_printoptions(threshold=10_000)
-    # numpy.set_printoptions(threshold=10_000)
+    print(dataset)
+    print(dataset[0].keys())
+    print(len(ts))
+    # print(dataset[0]['input_ids'].shape)
 
-    processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+    # from transformers import AutoProcessor
+
+    # # torch.set_printoptions(threshold=10_000)
+    # # numpy.set_printoptions(threshold=10_000)
+
+    # processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+    # print(processor.tokenizer.padding_side)
 
     # print(
     #     processor(text = ["I am the prince of wales"], return_tensors="np",padding="max_length", max_length=200, )
     # )
-
-    # print(dataset[0]['input_ids'])
-    # print(dataset[0]['input_ids'].shape)
+    # for i in range(len(dataset)):
+    #     print(dataset[i]['input_ids'])
+    #     print(dataset[i]['input_ids'].shape)
     # print(processor.tokenizer.pad_token_id)
     # print(processor.tokenizer.padding_side)
+
+    # print(processor.tokenizer.decode(dataset[0]['input_ids']))
 
     # print(processor.tokenizer.pad_token_id in dataset[0]['input_ids'])
 
     # print(f"Dataset length: {len(dataset)}")
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=2,
-        collate_fn=DataCollator(max_token_len=all_config["max_length"]),
-        num_workers=all_config["dataloader_num_workers"],
-    )
+    # dataloader = DataLoader(
+    #     ts,
+    #     batch_size=0,
+    #     collate_fn=DataCollator(
+    #         "Qwen/Qwen2.5-VL-3B-Instruct", max_token_len=all_config["max_length"]
+    #     ),
+    #     num_workers=4,
+    # )
+    # from tqdm import tqdm
 
-    print(next(iter(dataloader)))
+    # for b in tqdm(dataloader):
+    #     print(b.keys())
+    #     break
+
+    # print(next(iter(dataloader))['input_ids'].shape)
+
+    # from tqdm import tqdm
+
+    # for sample in tqdm(iter(dataloader), total=len(dataset)):
+
+    #     print(sample['input_ids'].shape)
+    #     print(sample['attention_mask'].shape)
+    #     print(sample['labels'].shape)
+    #     print(torch.sum(sample['attention_mask']))
+
+    #     check_tokens_and_labels(sample['input_ids'], sample['labels'])
+    #     print("====================================")
 
     # print(f"Dataset samples: {dataset[0].user_messages}")
 

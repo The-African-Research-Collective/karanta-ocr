@@ -160,6 +160,8 @@ def _merge_image_elements(
         return h_dist <= tolerance and v_dist <= tolerance
 
     # Union overlapping images
+    if n > 100:
+        return
     for i in range(n):
         for j in range(i + 1, n):
             if bboxes_overlap(images[i].bbox, images[j].bbox, tolerance):
@@ -234,6 +236,9 @@ def _linearize_pdf_report(report: PageReport, max_length: int = 4000) -> str:
         return result
 
     images = _merge_image_elements(report.image_elements)
+
+    if not images:
+        return ""
 
     # Process image elements
     image_strings = []
@@ -350,9 +355,8 @@ def get_anchor_text(
     else:
         raise ValueError(f"Unsupported PDF engine: {pdf_engine}")
 
-
 if __name__ == "__main__":
-    local_pdf_path = "/Users/odunayoogundepo/Downloads/Agbeyewo.pdf"
-    page_num = 2
+    local_pdf_path = "/home/oogundep/mock_training/pdf_inputs/mwb_IB_201804_page_5.pdf"
+    page_num = 1
 
     print(get_anchor_text(local_pdf_path, page_num, pdf_engine="pdfreport"))

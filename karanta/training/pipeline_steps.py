@@ -2,6 +2,7 @@ import logging
 import base64
 import json
 import yaml
+import torch
 import numpy as np
 
 from dataclasses import dataclass
@@ -56,16 +57,19 @@ class JSONOutputFormat(BasePipelineStep):
     """Takes the output and applies the standard yaml formatting to it"""
 
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
-        page_data = sample.page_data
+        page_data_list = sample.page_data
         sample.response = json.dumps(
-            {
-                "primary_language": page_data["primary_language"],
-                "is_rotation_valid": page_data["is_rotation_valid"],
-                "rotation_correction": page_data["rotation_correction"],
-                "is_table": page_data["is_table"],
-                "is_diagram": page_data["is_diagram"],
-                "natural_text": page_data["natural_text"],
-            },
+            [
+                {
+                    "primary_language": page_data["primary_language"],
+                    "is_rotation_valid": page_data["is_rotation_valid"],
+                    "rotation_correction": page_data["rotation_correction"],
+                    "is_table": page_data["is_table"],
+                    "is_diagram": page_data["is_diagram"],
+                    "natural_text": page_data["natural_text"],
+                }
+                for page_data in page_data_list
+            ],
             ensure_ascii=False,
         )
         return sample
@@ -78,6 +82,18 @@ class FetchPageData(BasePipelineStep):
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
         with open(sample.json_path, "r", encoding="utf-8") as f:
             output_result = json.loads(json.loads(f.read())["result"]["text"])
+
+        sample.page_data = output_result
+        return sample
+
+
+@dataclass(frozen=True, slots=True)
+class FetchMultipageData(BasePipelineStep):
+    """Similar to FetchPageData but this is for multipage format"""
+
+    def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
+        with open(sample.json_path, "r", encoding="utf-8") as f:
+            output_result = json.loads(f.read())["generation"]["pages"]
 
         sample.page_data = output_result
         return sample
@@ -109,24 +125,26 @@ class FinetuningPrompt(BasePipelineStep):
     def __call__(self, sample: SingleDatapoint) -> SingleDatapoint:
         image_page = True
 
-        if len(sample.anchor_text.split("\n")) > 10:
+        if sample.anchor_text and len(sample.anchor_text.split("\n")) > 10:
             image_page = False
+        else:
+            image_page = True
 
         with open(self.prompt_path, "r") as stream:
             prompt_template_dict = yaml.safe_load(stream)
 
             if image_page:
-                prompt_template_dict["system"] = Template(
-                    prompt_template_dict["newspaper_system"]
-                )
+                prompt_template_dict["system"] = prompt_template_dict[
+                    "olmo_ocr_system_prompt_no_anchor"
+                ]
+                sample.instruction_prompt = prompt_template_dict["system"]
             else:
                 prompt_template_dict["system"] = Template(
-                    prompt_template_dict["system"]
+                    prompt_template_dict["olmo_ocr_system_prompt"]
                 )
-
-        sample.instruction_prompt = prompt_template_dict["system"].render(
-            {"base_text": sample.anchor_text}
-        )
+                sample.instruction_prompt = prompt_template_dict["system"].render(
+                    {"base_text": sample.anchor_text}
+                )
         return sample
 
 
@@ -187,7 +205,7 @@ class Tokenizer(BasePipelineStep):
     )  # Standard PyTorch value for ignoring tokens in loss calculation
     end_of_message_token: str = "<|im_end|>"  # Configurable, defaults to Qwen format
 
-    def _pad_sequence(self, sequence: np.ndarray, pad_value: int) -> np.ndarray:
+    def _pad_sequence(self, sequence, pad_value: int) -> np.ndarray:
         """
         Pad a sequence to the specified maximum length.
 
@@ -201,12 +219,12 @@ class Tokenizer(BasePipelineStep):
         """
         if len(sequence) < self.max_length:
             extra_length = self.max_length - len(sequence)
-            padding = np.full((extra_length,), pad_value, dtype=sequence.dtype)
+            padding = torch.full((extra_length,), pad_value, dtype=sequence.dtype)
 
             if self.processor.tokenizer.padding_side == "right":
-                return np.concatenate([sequence, padding])
+                return torch.cat([sequence, padding])
             else:
-                return np.concatenate([padding, sequence])
+                return torch.cat([padding, sequence])
 
         elif len(sequence) > self.max_length:
             return sequence[: self.max_length]
@@ -271,15 +289,15 @@ class Tokenizer(BasePipelineStep):
         inputs = self.processor(
             text=[text],  # The formatted extraction instruction
             images=[main_image],  # The document image to process
-            padding=True,  # Pad sequences to same length
-            return_tensors="np",  # Return NumPy arrays
+            padding=False,  # Pad sequences to same length
+            return_tensors="pt",  # Return NumPy arrays
         )
 
         # === STRUCTURED OUTPUT TOKENIZATION ===
         # Tokenize the target structured text output (XML/JSON/YAML format)
         # This is what the model should learn to generate from the document image
         # Examples: JSON with extracted fields, XML with document structure, YAML with metadata
-        labels = self.processor(text=[response], padding=True, return_tensors="np")
+        labels = self.processor(text=[response], padding=False, return_tensors="pt")
 
         # === END-OF-EXTRACTION TOKEN HANDLING ===
         # Add special token to mark where the model should stop generating structured output
@@ -290,18 +308,18 @@ class Tokenizer(BasePipelineStep):
         )["input_ids"]
 
         # Convert to same data type as other tokens for concatenation
-        end_tokens = np.array(end_tokens, dtype=inputs.input_ids.dtype)
+        end_tokens = torch.tensor(end_tokens, dtype=inputs.input_ids.dtype)
 
         # === LABEL CONCATENATION WITH END TOKEN ===
         # Handle edge case where structured output might be empty (rare for OCR tasks)
         if labels["input_ids"].shape[1] == 0:
-            labels_input_ids_0 = np.array([], dtype=inputs.input_ids.dtype)
+            labels_input_ids_0 = torch.tensor([], dtype=inputs.input_ids.dtype)
         else:
-            labels_input_ids_0 = labels["input_ids"][0].astype(inputs.input_ids.dtype)
+            labels_input_ids_0 = labels["input_ids"][0].type(inputs.input_ids.dtype)
 
         # Append end token to the structured output labels
-        labels["input_ids"] = np.concatenate([labels_input_ids_0, end_tokens])
-        labels["input_ids"] = np.expand_dims(
+        labels["input_ids"] = torch.cat([labels_input_ids_0, end_tokens])
+        labels["input_ids"] = torch.unsqueeze(
             labels["input_ids"], axis=0
         )  # Add batch dimension back
 
@@ -309,13 +327,13 @@ class Tokenizer(BasePipelineStep):
         # Create the full training sequence: [extraction_instruction] + [structured_output] + [end_token]
         # The model will see this entire sequence but only be trained to generate the structured output part
         # Example: "Extract as JSON" + document_image -> {"name": "John", "address": "123 Main St"} + <|im_end|>
-        input_ids = np.concatenate([inputs.input_ids[0], labels.input_ids[0]], axis=0)
+        input_ids = torch.cat([inputs.input_ids[0], labels.input_ids[0]], axis=0)
 
         # === ATTENTION MASK CREATION ===
         # Create attention mask - all tokens participate in attention
         # The model needs to attend to both the instruction and document image features
         # to understand what type of extraction is requested and what content to extract
-        attention_mask = np.ones_like(input_ids)
+        attention_mask = torch.ones_like(input_ids)
 
         # === TRAINING LABEL CREATION (CRITICAL FOR OCR LEARNING) ===
         # Create labels for training with proper masking:
@@ -323,20 +341,11 @@ class Tokenizer(BasePipelineStep):
         # - Only the structured output portion gets actual token IDs as labels
         # This ensures the model only learns to generate structured text output, not repeat the instruction
         # The model learns: document_image + instruction -> structured_output
-        labels_full = np.full_like(input_ids, fill_value=self.masking_index)
+        labels_full = torch.full_like(input_ids, fill_value=self.masking_index)
 
         # Unmask only the structured output portion (everything after the instruction prompt)
         # The model will be penalized only for mistakes in generating the XML/JSON/YAML output
         labels_full[len(inputs.input_ids[0]) :] = labels.input_ids[0]
-
-        # === LABEL PADDING ===
-        # Pad labels to the maximum length expected by the model
-
-        input_ids = self._pad_sequence(
-            input_ids, pad_value=self.processor.tokenizer.pad_token_id
-        )
-        attention_mask = self._pad_sequence(attention_mask, pad_value=0)
-        labels_full = self._pad_sequence(labels_full, pad_value=self.masking_index)
 
         # === OUTPUT ASSEMBLY ====
         # Package all processed data into the format expected by the OCR model trainer
@@ -357,6 +366,7 @@ class Tokenizer(BasePipelineStep):
         # Some models need additional image processing metadata for document understanding
         # image_grid_thw typically contains height, width, and other document image dimensions
         # This helps with layout understanding and text region detection
+
         if hasattr(inputs, "image_grid_thw"):
             sample.model_inputs["image_grid_thw"] = inputs.image_grid_thw[0]
 
