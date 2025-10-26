@@ -29,13 +29,10 @@ class ExperimentArguments:
         default=500,
         metadata={"help": "Run an evaluation every n steps."},
     )
-    report_to: Union[str, List[str]] = field(
-        default="all",
+    profile_steps: Optional[int] = field(
+        default=10,
         metadata={
-            "help": "The integration(s) to report results and logs to. "
-            "Can be a single string or a list of strings. "
-            "Options are 'tensorboard', 'wandb', 'comet_ml', 'clearml', or 'all'. "
-            "Specify multiple by listing them: e.g., ['tensorboard', 'wandb']"
+            "help": "Run profiler for these steps. Should be a comma separated list of two integers."
         },
     )
     optimizer: str = field(
@@ -65,7 +62,7 @@ class ExperimentArguments:
         default="wandb", metadata={"help": "The service to report to"}
     )
     timeout: Optional[int] = field(
-        default=600, metadata={"help": "The timeout for the run"}
+        default=7200, metadata={"help": "The timeout for the run"}
     )
     checkpointing_steps: Optional[str] = field(
         default=None,
@@ -84,6 +81,10 @@ class ExperimentArguments:
     per_device_train_batch_size: int = field(
         default=1,
         metadata={"help": "Batch size per GPU/TPU core/CPU for training."},
+    )
+    per_device_eval_batch_size: int = field(
+        default=1,
+        metadata={"help": "Batch size per GPU/TPU core/CPU for evaluation."},
     )
     reduce_loss: str = field(
         default="mean",
@@ -148,7 +149,17 @@ class ExperimentArguments:
         default=5e-5,
         metadata={"help": "The initial learning rate for AdamW."},
     )
-    max_train_steps: int = field(default=None)
+    overwrite_output_dir: bool = field(default=False)
+    use_deepspeed: bool = field(default=False)
+    max_norm: float = field(
+        default=-1,
+        metadata={
+            "help": "Clip gradient norm. Not compatible with deepspeed (use deepspeed config instead)."
+        },
+    )
+    is_profile: bool = field(
+        default=False, metadata={"help": "Whether to enable profiling for the run"}
+    )
 
 
 @dataclass
@@ -181,7 +192,7 @@ class ModelArguments:
         default=False, metadata={"help": "Whether to use the LORA training"}
     )
     lora_rank: Optional[int] = field(
-        default=64, metadata={"help": "The rank of the LORA model"}
+        default=128, metadata={"help": "The rank of the LORA model"}
     )
     lora_alpha: Optional[float] = field(
         default=16,
@@ -233,16 +244,26 @@ class ModelArguments:
 
 @dataclass
 class DatasetArguments:
-    dataset_eval: List[Dict[str, Any]] = field(default_factory=list)
     dataset_train: List[Dict[str, Any]] = field(default_factory=list)
+    dataset_eval: Optional[List[Dict[str, Any]]] = field(default_factory=list)
     dataloader_num_workers: int = field(
         default=4,
         metadata={"help": "The number of workers to use for data loading."},
     )
-    max_length: Optional[int] = field(
+    max_length: int = field(
         default=8192,
         metadata={
             "help": "The maximum sequence length for the model. "
             "Sequences will be truncated to this length."
+        },
+    )
+    num_samples: int = field(
+        default=-1, metadata={"help": "Total number of samples to use in training"}
+    )
+    data_cache_folder_name: str = field(
+        default="data_cache",
+        metadata={
+            "help": "The folder name to use for caching the dataset. "
+            "If the dataset is large, it is recommended to set this to a folder on disk with enough space."
         },
     )
