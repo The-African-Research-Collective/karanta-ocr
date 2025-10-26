@@ -245,10 +245,6 @@ def prepare_image_and_text(
 
     if convert_to_grayscale:
         image_base64 = base64_to_grayscale(image_base64)
-        # try:
-        #     image_base64 = base64_to_grayscale(image_base64)
-        # except Exception as e:
-        #     print("Failed to convert image to grayscale. Using original image.")
 
     anchor_text = get_anchor_text(local_pdf_path, page, pdf_engine="pdfreport")
 
@@ -438,6 +434,170 @@ def openai_response_format_schema_multipages() -> dict:
                 },
                 "additionalProperties": False,
                 "required": ["pages"],
+            },
+            "strict": True,
+        },
+    }
+
+
+def text_order_response_format() -> dict:
+    """
+    Returns the OpenAI response format schema for text order test generation.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "text_order_response",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "tests": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "test_type": {
+                                    "type": "string",
+                                    "enum": ["text_order"],
+                                    "description": "The type of test to be performed.",
+                                },
+                                "before": {
+                                    "type": "string",
+                                    "description": "The text that should appear before the target text.",
+                                },
+                                "after": {
+                                    "type": "string",
+                                    "description": "The text that should appear after the target text.",
+                                },
+                                "target": {
+                                    "type": "string",
+                                    "description": "The target text whose order is to be verified.",
+                                },
+                            },
+                            "additionalProperties": False,
+                            "required": ["test_type", "before", "after", "target"],
+                        },
+                        "description": "A list of tests to check for the presence of specific text in the image.",
+                    }
+                },
+                "additionalProperties": False,
+                "required": ["tests"],
+            },
+            "strict": True,
+        },
+    }
+
+
+def text_present_response_format() -> dict:
+    """
+    Returns the OpenAI response format schema for text presence test generation.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "text_present_response",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "tests": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "test_type": {
+                                    "type": "string",
+                                    "enum": ["text_present"],
+                                    "description": "The type of test to be performed.",
+                                },
+                                "text": {
+                                    "type": "string",
+                                    "description": "The text that is present in the image.",
+                                },
+                                "case_sensitive": {
+                                    "type": "boolean",
+                                    "description": "Indicates whether the text matching should be case sensitive.",
+                                },
+                                "first_n": {
+                                    "type": ["string", "null"],
+                                    "description": "If provided, only the first N characters of the text should be considered for matching. If null, consider the full text.",
+                                },
+                                "last_n": {
+                                    "type": ["string", "null"],
+                                    "description": "If provided, only the last N characters of the text should be considered for matching. If null, consider the full text.",
+                                },
+                            },
+                            "additionalProperties": False,
+                            "required": [
+                                "test_type",
+                                "text",
+                                "case_sensitive",
+                                "first_n",
+                                "last_n",
+                            ],
+                        },
+                        "description": "A list of tests to check for the presence of specific text in the image.",
+                    }
+                },
+                "additionalProperties": False,
+                "required": ["tests"],
+            },
+            "strict": True,
+        },
+    }
+
+
+def text_absent_response_format() -> dict:
+    """
+    Returns the OpenAI response format schema for text absence test generation.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "text_absent_response",
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "tests": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "test_type": {
+                                    "type": "string",
+                                    "enum": ["text_absent"],
+                                    "description": "The type of test to be performed.",
+                                },
+                                "text": {
+                                    "type": "string",
+                                    "description": "The text that is present in the image.",
+                                },
+                                "case_sensitive": {
+                                    "type": "boolean",
+                                    "description": "Indicates whether the text matching should be case sensitive.",
+                                },
+                                "first_n": {
+                                    "type": ["string", "null"],
+                                    "description": "If provided, only the first N characters of the text should be considered for matching. If null, consider the full text.",
+                                },
+                                "last_n": {
+                                    "type": ["string", "null"],
+                                    "description": "If provided, only the last N characters of the text should be considered for matching. If null, consider the full text.",
+                                },
+                            },
+                            "additionalProperties": False,
+                            "required": [
+                                "test_type",
+                                "text",
+                                "case_sensitive",
+                                "first_n",
+                                "last_n",
+                            ],
+                        },
+                        "description": "A list of tests to check for the presence of specific text in the image.",
+                    }
+                },
+                "additionalProperties": False,
+                "required": ["tests"],
             },
             "strict": True,
         },

@@ -5,11 +5,56 @@ text_present_prompt: >
   Each test case should include the following fields in JSON format:
   - text: A short span of text that is present on the page.
   - case_sensitive: A boolean indicating whether the text match should be case sensitive.
-  - first_n: In the first how many words of the document should this text be found.
-  - last_n: In the last how many words of the document should this text be found.
+  - first_n: In the first how many words of the document should this text be found. if first_n is is set, then last_n should be null.
+  - last_n: In the last how many words of the document should this text be found. if last_n is is set, then first_n should be null.
 
   Ensure that the text spans you choose are unique and cover different sections of the document. The text spans should be of varying lengths, from short phrases to longer sentences. Make sure the text spans are clearly present on the page.
 
+  The spans can be a few words long or a full sentence.
+
+  Return a JSON array of these test case objects.
+
+text_order_prompt: >
+  Below is the image of one page of a PDF document
+  Your task is to create a list of test cases to validate the functionality of a document processing system. I want you to create a list of 5 text order test cases based on the content of the page.
+  
+  Each test case should include the following fields in JSON format:
+  - before : A short span of text that appears before another span on the page.
+  - after : A short span of text that appears after another span on the page.
+  - target : The text span that should be found between the 'before' and 'after' spans.
+
+  The spans can be a few words long or a full sentence.
+
+  Ensure that the text spans you choose are unique and cover different sections of the document. The text spans should be of varying lengths, from short phrases to longer sentences. Make sure the text spans are clearly present on the page.
+  Return a JSON array of these test case objects.
+
+text_absent_prompt: >
+  Below is the image of one page of a PDF document
+  Your task is to create a list of test cases to validate the functionality of a document processing system. I want you to create a list of 5 text absent test cases based on the content of the page.
+  Ensure that the generated text are likely to be confused with the actual text on the page, but are definitely not present on the page.
+
+  Each test case should include the following fields in JSON format:
+  - text: A short span of text that is NOT present on the page.
+  - case_sensitive: A boolean indicating whether the text match should be case sensitive.
+  - first_n: In the first how many words of the document should this text be found. if first_n is is set, then last_n should be null.
+  - last_n: In the last how many words of the document should this text be found. if last_n is is set, then first_n should be null.
+  
+  Return a JSON array of these test case objects.
+
+headers_footers_prompt: >
+  Below is the image of one page of a PDF document
+  Your task is to create a list of test cases to validate the functionality of a document processing system.
+  I want you to you to return the headers and footers including page numbers that are present on the page in JSON format.
+
+  Ensure that the header or footer is not a page title or section title, but is indeed a header or footer text or pagenumber.
+  If there is no header or footer on the page, return an empty JSON array.
+
+  Each test case should include the following fields in JSON format:
+  - text: the header or footer text or pagenumber that is  present on the page.
+  - case_sensitive: A boolean indicating whether the text match should be case sensitive.
+  - first_n: In the first how many words of the document should this text be found. if first_n is is set, then last_n should be null.
+  - last_n: In the last how many words of the document should this text be found. if last_n is is set, then first_n should be null.
+  
   Return a JSON array of these test case objects.
 
 
