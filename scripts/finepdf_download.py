@@ -76,7 +76,7 @@ def deterministic_id(string: str) -> str:
 
 
 @retry(
-    stop=stop_after_attempt(1000),
+    stop=stop_after_attempt(1_000),
     wait=wait_fixed(1),
     retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, OSError)),
 )
@@ -88,29 +88,34 @@ def query_commoncrawl_parquet(crawl_filepath: str, surt_key: str) -> dict | None
         col_idx = pf.schema_arrow.get_field_index("url_surtkey")
         stats = rg.column(col_idx).statistics
 
-        if stats and stats.min <= surt_key <= stats.max:
-            df = pf.read_row_groups(
-                [i],
-                columns=[
-                    "url_surtkey",
-                    "url",
-                    "warc_filename",
-                    "warc_record_offset",
-                    "warc_record_length",
-                ],
-            ).to_pandas()
+        if (
+            not stats
+            or stats.min is None
+            or stats.max is None
+            or not (stats.min <= surt_key <= stats.max)
+        ):
+            continue
 
-            match = df[df["url_surtkey"] == surt_key]
-            if len(match) > 0:
-                # TODO: @theyorubayesian: Why would there be multiple matches?
-                return match.iloc[0].to_dict()
-            break
+        df = pf.read_row_groups(
+            [i],
+            columns=[
+                "url_surtkey",
+                "url",
+                "warc_filename",
+                "warc_record_offset",
+                "warc_record_length",
+            ],
+        ).to_pandas()
+
+        match = df[df["url_surtkey"] == surt_key]
+        if len(match) > 0:
+            return match.iloc[0].to_dict()
 
     return None
 
 
 @retry(
-    stop=stop_after_attempt(1000),
+    stop=stop_after_attempt(1_000),
     wait=wait_fixed(1),
     retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, OSError)),
 )
@@ -131,7 +136,7 @@ async def get_record_length_from_warc_headers(
 
 
 @retry(
-    stop=stop_after_attempt(1000),
+    stop=stop_after_attempt(1_000),
     wait=wait_fixed(1),
     retry=retry_if_exception_type((aiohttp.ClientError, asyncio.TimeoutError, OSError)),
 )
@@ -291,10 +296,10 @@ async def download_fineweb_african_pdfs(
 
     async with aiohttp.ClientSession() as session:
         for _, language_ds in ds.items():
-            await asyncio.gather(
-                *[
+            for batch in language_ds.batch(batch_size=1_000):
+                tasks = [
                     download_pdf(row, PDF_DOWNLOAD_FOLDER, session=session)
-                    for row in language_ds
+                    for row in Dataset.from_dict(batch)
                     if not os.path.exists(
                         os.path.join(
                             PDF_DOWNLOAD_FOLDER,
@@ -303,7 +308,10 @@ async def download_fineweb_african_pdfs(
                         )
                     )
                 ]
-            )
+                if not tasks:
+                    continue
+
+                await asyncio.gather(*tasks)
 
     # TODO: Do we rewrite the dataset to file?
 
