@@ -74,6 +74,7 @@ def render_pdf_to_base64png(
     assert pdftoppm_result.returncode == 0, pdftoppm_result.stderr
     return base64.b64encode(pdftoppm_result.stdout).decode("utf-8")
 
+
 def get_png_dimensions_from_base64(base64_data) -> tuple[int, int]:
     """
     Returns the (width, height) of a PNG image given its base64-encoded data,

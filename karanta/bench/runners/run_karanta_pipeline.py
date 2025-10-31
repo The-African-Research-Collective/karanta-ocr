@@ -9,12 +9,14 @@ from karanta.pipeline import (
     WorkerTracker,
     vllm_server_host,
     vllm_server_ready,
-    process_page
+    process_page,
 )
 from karanta.constants import PROMPT_PATH
 
 # Setup basic logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger("karantaocr_runner")
 
 
@@ -40,7 +42,11 @@ class Args:
 server_check_lock = asyncio.Lock()
 
 
-async def run_karanta_pipeline(pdf_path: str, page_num: int = 1, model: str = "/home/oogundep/karanta-ocr/runs/karanta_set_qwen_2_5_3B_vl_all_samples_linear_no_base_text") -> Optional[str]:
+async def run_karanta_pipeline(
+    pdf_path: str,
+    page_num: int = 1,
+    model: str = "/home/oogundep/karanta-ocr/runs/karanta_set_qwen_2_5_3B_vl_all_samples_linear_no_base_text",
+) -> Optional[str]:
     """
     Process a single page of a PDF using the official olmocr pipeline's process_page function
 
@@ -71,7 +77,9 @@ async def run_karanta_pipeline(pdf_path: str, page_num: int = 1, model: str = "/
             logger.info("Using existing vllm server")
         except Exception:
             logger.info("Starting new vllm server")
-            _server_task = asyncio.create_task(vllm_server_host(args.model, args, semaphore))
+            _server_task = asyncio.create_task(
+                vllm_server_host(args.model, args, semaphore)
+            )
             await vllm_server_ready(args)
 
     # Sets the model name used in the pipeline code, it's a hack sadly
@@ -81,11 +89,13 @@ async def run_karanta_pipeline(pdf_path: str, page_num: int = 1, model: str = "/
         # Process the page using the pipeline's process_page function
         # Note: process_page expects both original path and local path
         # In our case, we're using the same path for both
-        page_result: PageResult = await process_page(args=args,
-                        worker_id=worker_id,
-                        pdf_orig_path=pdf_path,
-                        pdf_local_path=pdf_path,
-                        page_num=page_num)
+        page_result: PageResult = await process_page(
+            args=args,
+            worker_id=worker_id,
+            pdf_orig_path=pdf_path,
+            pdf_local_path=pdf_path,
+            page_num=page_num,
+        )
 
         # Return the natural text from the response
         if page_result and page_result.response and not page_result.is_fallback:
