@@ -1,3 +1,7 @@
+"""
+Code Adapted From: https://github.com/allenai/olmocr/blob/main/olmocr/pipeline.py
+"""
+
 import argparse
 import asyncio
 import atexit
