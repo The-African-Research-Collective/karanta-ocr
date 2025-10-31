@@ -1,3 +1,7 @@
+"""
+Code Adapted from: https://github.com/allenai/olmocr/blob/main/olmocr/bench/runners/run_olmocr_pipeline.py
+"""
+
 import asyncio
 import logging
 from dataclasses import dataclass
