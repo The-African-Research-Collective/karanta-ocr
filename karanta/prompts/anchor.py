@@ -355,6 +355,7 @@ def get_anchor_text(
     else:
         raise ValueError(f"Unsupported PDF engine: {pdf_engine}")
 
+
 if __name__ == "__main__":
     local_pdf_path = "/home/oogundep/mock_training/pdf_inputs/mwb_IB_201804_page_5.pdf"
     page_num = 1

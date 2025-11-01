@@ -73,3 +73,62 @@ def render_pdf_to_base64png(
     )
     assert pdftoppm_result.returncode == 0, pdftoppm_result.stderr
     return base64.b64encode(pdftoppm_result.stdout).decode("utf-8")
+
+
+def get_png_dimensions_from_base64(base64_data) -> tuple[int, int]:
+    """
+    Returns the (width, height) of a PNG image given its base64-encoded data,
+    without base64-decoding the entire data or loading the PNG itself
+
+    Should be really fast to support filtering
+
+    Parameters:
+    - base64_data (str): Base64-encoded PNG image data.
+
+    Returns:
+    - tuple: (width, height) of the image.
+
+    Raises:
+    - ValueError: If the data is not a valid PNG image or the required bytes are not found.
+    """
+    # PNG signature is 8 bytes
+    png_signature_base64 = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
+    if not base64_data.startswith(png_signature_base64[:8]):
+        raise ValueError("Not a valid PNG file")
+
+    # Positions in the binary data where width and height are stored
+    width_start = 16  # Byte position where width starts (0-based indexing)
+    _width_end = 20  # Byte position where width ends (exclusive)
+    _height_start = 20
+    height_end = 24
+
+    # Compute the byte range needed (from width_start to height_end)
+    start_byte = width_start
+    end_byte = height_end
+
+    # Calculate base64 character positions
+    # Each group of 3 bytes corresponds to 4 base64 characters
+    base64_start = (start_byte // 3) * 4
+    base64_end = ((end_byte + 2) // 3) * 4  # Add 2 to ensure we cover partial groups
+
+    # Extract the necessary base64 substring
+    base64_substring = base64_data[base64_start:base64_end]
+
+    # Decode only the necessary bytes
+    decoded_bytes = base64.b64decode(base64_substring)
+
+    # Compute the offset within the decoded bytes
+    offset = start_byte % 3
+
+    # Extract width and height bytes
+    width_bytes = decoded_bytes[offset : offset + 4]
+    height_bytes = decoded_bytes[offset + 4 : offset + 8]
+
+    if len(width_bytes) < 4 or len(height_bytes) < 4:
+        raise ValueError("Insufficient data to extract dimensions")
+
+    # Convert bytes to integers
+    width = int.from_bytes(width_bytes, "big")
+    height = int.from_bytes(height_bytes, "big")
+
+    return width, height
