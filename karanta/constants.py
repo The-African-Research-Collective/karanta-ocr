@@ -2,7 +2,6 @@ from enum import Enum
 
 TARGET_IMAGE_DIM = 2048
 PROMPT_PATH = "configs/prompts/open_ai_data_generation.yaml"
-CREATE_TEST_PROMPT_PATH = "configs/prompts/create_tests.yaml"
 
 
 class ModelGroup(str, Enum):

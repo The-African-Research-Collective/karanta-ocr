@@ -9,29 +9,13 @@ import internetarchive
 
 # Map ISO codes or short names to full Archive.org language names
 LANGUAGE_MAP = {
-    "yor": "Yoruba",
-    "hau": "Hausa",
-    "igb": "Igbo",
-    "swa": "Swahili",
-    "kin": "Kinyarwanda",
-    "lug": "Luganda",
-    "amh": "Amharic",
-    "tsn": "Tswana",
-    "zul": "Zulu",
-    "xho": "Xhosa",
-    "sn": "Shona",
-    "wol": "Wolof",
-    "tiv": "Tiv",
-    "twi": "Twi",
-    "eng": "English",
-    "fra": "French",
-    "ara": "Arabic",
-    "por": "Portuguese",
-    "som": "Somali",
-    "tigr": "Tigrinya",
-    "run": "Kirundi",
+    "yor": "Yoruba", "hau": "Hausa", "igb": "Igbo",
+    "swa": "Swahili", "kin": "Kinyarwanda", "lug": "Luganda",
+    "amh": "Amharic", "tsn": "Tswana", "zul": "Zulu", "xho": "Xhosa",
+    "sn": "Shona", "wol": "Wolof", "tiv": "Tiv", "twi": "Twi", "eng": "English",
+    "fra": "French", "ara": "Arabic", "por": "Portuguese",
+    "som": "Somali", "tigr": "Tigrinya", "run": "Kirundi"
 }
-
 
 def resolve_language_name(input_lang: str) -> str:
     normalized = input_lang.strip().lower()
@@ -48,45 +32,28 @@ def resolve_language_name(input_lang: str) -> str:
     # Fallback
     return input_lang.strip().title()
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Download PDFs from Internet Archive filtered by exact language."
     )
-    parser.add_argument(
-        "language", help="Language name or code (e.g., yor, English, Swahili)"
-    )
-    parser.add_argument(
-        "--output",
-        default="./output",
-        help="Directory to store PDFs (default: ./output)",
-    )
-    parser.add_argument(
-        "--workers", type=int, default=4, help="Number of parallel downloads"
-    )
-    parser.add_argument(
-        "--include-derived",
-        action="store_true",
-        help="Include derived PDFs if no original PDFs found (default: off)",
-    )
+    parser.add_argument("language", help="Language name or code (e.g., yor, English, Swahili)")
+    parser.add_argument("--output", default="./output", help="Directory to store PDFs (default: ./output)")
+    parser.add_argument("--workers", type=int, default=4, help="Number of parallel downloads")
+    parser.add_argument("--include-derived", action="store_true", help="Include derived PDFs if no original PDFs found (default: off)")
     return parser.parse_args()
-
 
 def create_log_entry(log_file: Path, item_id: str, pdf_name: str):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with log_file.open("a") as f:
         f.write(f"[{timestamp}] Downloaded: {item_id}/{pdf_name}\n")
 
-
-def record_result(
-    json_log: Path, item_id: str, status: str, filename: str = None, error: str = None
-):
+def record_result(json_log: Path, item_id: str, status: str, filename: str = None, error: str = None):
     record = {
         "timestamp": datetime.datetime.now().isoformat(),
         "item_id": item_id,
         "status": status,
         "filename": filename,
-        "error": error,
+        "error": error
     }
     existing = []
     if json_log.exists():
@@ -98,7 +65,6 @@ def record_result(
     existing.append(record)
     with json_log.open("w") as f:
         json.dump(existing, f, indent=2)
-
 
 def download_item(args):
     item_id, output_dir_str, log_file_str, json_log_str, include_derived = args
@@ -124,7 +90,7 @@ def download_item(args):
                         verbose=True,
                         retries=3,
                         ignore_existing=True,
-                        no_directory=True,
+                        no_directory=True
                     )
                     if success:
                         create_log_entry(log_file, item_id, name)
@@ -134,9 +100,7 @@ def download_item(args):
 
         if include_derived and not downloaded:
             print(f"Trying derived PDF for {item_id}")
-            success = item.download(
-                formats=["pdf"], destdir=str(output_dir), verbose=True, retries=2
-            )
+            success = item.download(formats=["pdf"], destdir=str(output_dir), verbose=True, retries=2)
             if success:
                 for file in output_dir.glob("*.pdf"):
                     if file.name.lower().endswith(".pdf"):
@@ -152,7 +116,6 @@ def download_item(args):
     except Exception as e:
         print(f"[ERROR] Failed to download {item_id}: {e}")
         record_result(json_log, item_id, "error", error=str(e))
-
 
 def main():
     args = parse_args()
@@ -170,13 +133,7 @@ def main():
     results = internetarchive.search_items(query)
 
     download_jobs = [
-        (
-            result["identifier"],
-            str(output_dir),
-            str(log_file),
-            str(json_log),
-            args.include_derived,
-        )
+        (result["identifier"], str(output_dir), str(log_file), str(json_log), args.include_derived)
         for result in results
     ]
 
@@ -188,7 +145,6 @@ def main():
     print(f"Finished. PDFs saved to: {output_dir}")
     print(f"Log written to: {log_file}")
     print(f"JSON summary written to: {json_log}")
-
 
 if __name__ == "__main__":
     main()
